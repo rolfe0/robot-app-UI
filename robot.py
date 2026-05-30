@@ -33,10 +33,10 @@ if os.path.exists(model_filename):
     # 3. 建立動作控制按鈕
     st.write("### 🎬 動作控制面板")
     
-    # 建立一個按鈕，點擊後會啟動 Mixamo 的動畫
+    # 建立一個按鈕，點擊後會啟動 Armature 的動畫
     if st.button("💃 讓機器人開始跳舞/動作"):
-        action_name = "mixamo.com"
-        st.info("🎵 正在循環播放 Mixamo 動畫中...")
+        action_name = "Armature"  # 修正：精準對接你的骨架動畫名稱
+        st.info("🎵 正在循環播放 Armature 動畫中...")
     else:
         action_name = ""  # 預設不點擊時是預設狀態
 
@@ -60,5 +60,4 @@ if os.path.exists(model_filename):
     st.success("🟢 網頁已成功同步！")
 
 else:
-    # 這裡的 else 對應到最上方的 if os.path.exists(model_filename)
     st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
