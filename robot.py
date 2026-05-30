@@ -34,20 +34,19 @@ if os.path.exists(model_filename):
     # 3. 嵌入 Google 3D 渲染器
     html_code = f"""
     <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
-    <div style="display: flex; justify-content: center;">
+    <div style="display: flex; justify-content: center; align-items: center; background-color: #1E1E24; border-radius: 15px; padding: 10px;">
         <model-viewer 
             src="data:application/octet-stream;base64,{b64_model}" 
             alt="3D 機器人模型" 
             autoplay
             camera-controls 
-            style="width: 100%; height: 500px; background-color: #1E1E24; border-radius: 15px; box-shadow: 0px 4px 12px rgba(0,0,0,0.3);">
+            style="width: 100%; height: 500px;">
         </model-viewer>
     </div>
     """
     
-    # 將 3D 畫面畫在網頁上（改用 2026/06/01 官方推薦的新版 st.iframe 寫法）
-    b64_html = base64.b64encode(html_code.encode()).decode()
-    st.iframe(f"data:text/html;base64,{b64_html}", height=530)
+    # 4. 畫出 3D 畫面（修正後最穩定的 st.html 寫法，不會讓機器人消失，同時移除過期警告）
+    st.html(html_code)
     st.success("🟢 網頁已成功同步！")
 
 else:
