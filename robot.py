@@ -45,8 +45,8 @@ if os.path.exists(model_filename):
     </div>
     """
     
-    # 4. 畫出 3D 畫面（修正後最穩定的 st.html 寫法，不會讓機器人消失，同時移除過期警告）
-    st.html(html_code)
+# 4. 畫出 3D 畫面（使用內嵌元件並強制設定高度，防止畫面被壓扁）
+    st.components.v1.html(html_code, height=530)
     st.success("🟢 網頁已成功同步！")
 
 else:
