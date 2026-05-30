@@ -28,7 +28,7 @@ if os.path.exists(model_filename):
             camera-controls 
             autoplay
             loop
-            time-scale="0.5"
+            time-scale="0.3"
             style="width: 100%; height: 500px;">
         </model-viewer>
     </div>
