@@ -45,9 +45,8 @@ if os.path.exists(model_filename):
         </model-viewer>
     </div>
     """
-    # 將 3D 畫面畫在網頁上
-    components.html(html_code, height=530)
+ # 將 3D 畫面畫在網頁上（改用官方推薦的 st.iframe）
+    st.iframe(f"data:text/html;base64,{base64.b64encode(html_code.encode()).decode()}", height=530)
     st.success("🟢 網頁已成功同步！")
-
 else:
     st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
