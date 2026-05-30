@@ -6,7 +6,7 @@ import json
 # 1. 設定網頁標題與基本樣式
 st.set_page_config(page_title="🤖 機器人控制台", layout="centered")
 st.title("🤖 我的面板機器人")
-st.write("目前狀態：🟢 系統已就緒。")
+st.write("目前狀態：🟢 機器人動力核心已啟動，全自動動畫循環播放中。")
 
 # --- 安全讀取 Firebase 金鑰 ---
 firebase_secret_str = st.secrets.get("FIREBASE_KEY")
@@ -30,24 +30,13 @@ if os.path.exists(model_filename):
         bytes_data = f.read()
     b64_model = base64.b64encode(bytes_data).decode()
 
-    # 3. 建立動作控制按鈕
-    st.write("### 🎬 動作控制面板")
-    
-    # 建立按鈕，點擊後觸發模型內正確的動畫名稱 "Scene"
-    if st.button("💃 讓機器人開始跳舞/動作"):
-        action_name = "Scene"  # 💥 這裡改成了你模型裡真正的動畫軌道名稱！
-        st.info("🎵 正在無限循環播放機器人動畫中...")
-    else:
-        action_name = ""  # 預設未點擊時
-
-    # 4. 嵌入 Google 3D 渲染器（加上了 loop 屬性讓它重複播放）
+    # 3. 嵌入 Google 3D 渲染器（移除名稱限制，改用無條件全自動強推播放）
     html_code = f"""
     <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
     <div style="display: flex; justify-content: center; align-items: center; background-color: #1E1E24; border-radius: 15px; padding: 10px;">
         <model-viewer 
             src="data:application/octet-stream;base64,{b64_model}" 
             alt="3D 機器人模型" 
-            animation-name="{action_name}"
             autoplay
             loop
             camera-controls 
@@ -56,9 +45,9 @@ if os.path.exists(model_filename):
     </div>
     """
     
-    # 畫出 3D 畫面並維持高度
+    # 4. 畫出 3D 畫面並維持高度
     st.components.v1.html(html_code, height=530)
-    st.success("🟢 網頁已成功同步！")
+    st.success("🟢 網頁 3D 視區已同步完成！")
 
 else:
     st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
