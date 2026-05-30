@@ -13,7 +13,6 @@ firebase_secret_str = st.secrets.get("FIREBASE_KEY")
 
 if firebase_secret_str:
     try:
-        # 將字串安全轉換成 Python 字典，供你的 Firebase 程式後續使用
         firebase_config = json.loads(firebase_secret_str)
         st.success("🟢 Firebase 安全金鑰已成功載入！")
     except Exception as e:
@@ -31,19 +30,37 @@ if os.path.exists(model_filename):
         bytes_data = f.read()
     b64_model = base64.b64encode(bytes_data).decode()
 
-    # 3. 嵌入 Google 3D 渲染器
+    # 3. 建立動作控制按鈕
+    st.write("### 🎬 動作控制面板")
+    
+    # 建立一個按鈕，點擊後會啟動 Mixamo 的動畫
+    if st.button("💃 讓機器人開始跳舞/動作"):
+        action_name = "mixamo.com"
+        st.info("🎵 正在循環播放 Mixamo 動畫中...")
+    else:
+        action_name = ""  # 預設不點擊時是靜止或預設狀態
+
+    # 4. 嵌入 Google 3D 渲染器（加上了 animation-name）
     html_code = f"""
     <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
     <div style="display: flex; justify-content: center; align-items: center; background-color: #1E1E24; border-radius: 15px; padding: 10px;">
         <model-viewer 
             src="data:application/octet-stream;base64,{b64_model}" 
             alt="3D 機器人模型" 
+            animation-name="{action_name}"
             autoplay
             camera-controls 
             style="width: 100%; height: 500px;">
         </model-viewer>
     </div>
     """
+    
+    # 畫出 3D 畫面
+    st.components.v1.html(html_code, height=530)
+    st.success("🟢 網頁已成功同步！")
+
+else:
+    st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
     
 # 4. 畫出 3D 畫面（使用內嵌元件並強制設定高度，防止畫面被壓扁）
     st.components.v1.html(html_code, height=530)
