@@ -5,7 +5,7 @@ import os
 # 1. 設定網頁標題與基本樣式
 st.set_page_config(page_title="🤖 機器人控制台", layout="centered")
 st.title("🤖 我的面板機器人")
-st.write("目前狀態：🟢 動畫速度已調慢至 0.5 倍速播放中。")
+st.write("目前狀態：🟢 動畫速度已調慢至 0.1 極致慢動作播放中。")
 
 # 設定你的 3D 模型檔名
 model_filename = "robot.glb"
@@ -16,25 +16,25 @@ if os.path.exists(model_filename):
         bytes_data = f.read()
     b64_model = base64.b64encode(bytes_data).decode()
 
-    # 3. 嵌入 Google 3D 渲染器（加上 time-scale="0.5" 來放慢速度）
+    # 3. 嵌入 Google 3D 渲染器（加上 time-scale="0.1" 讓動作變超慢）
     html_code = f"""
     <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
     
     <div style="display: flex; justify-content: center; align-items: center; background-color: #1E1E24; border-radius: 15px; padding: 10px;">
         <model-viewer 
-            id="speed-robot"
+            id="slow-robot"
             src="data:application/octet-stream;base64,{b64_model}" 
             alt="3D 機器人模型" 
             camera-controls 
             autoplay
             loop
-            time-scale="0.3"
+            time-scale="0.1"
             style="width: 100%; height: 500px;">
         </model-viewer>
     </div>
 
     <script>
-        const modelViewer = document.querySelector("#speed-robot");
+        const modelViewer = document.querySelector("#slow-robot");
 
         modelViewer.addEventListener("load", () => {{
             const anims = modelViewer.availableAnimations;
@@ -67,7 +67,7 @@ if os.path.exists(model_filename):
     
     # 4. 畫出 3D 畫面並維持高度
     st.components.v1.html(html_code, height=530)
-    st.success("🟢 網頁 3D 核心已更新速度設定！")
+    st.success("🟢 網頁 3D 核心已更新至 0.1 倍速！")
 
 else:
     st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
