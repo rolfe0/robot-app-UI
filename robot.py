@@ -3,7 +3,7 @@ import base64
 import os
 import json
 
-# 1. 設定網頁標題
+# 1. 設定網頁標題與基本樣式
 st.set_page_config(page_title="🤖 機器人控制台", layout="centered")
 st.title("🤖 我的面板機器人")
 st.write("目前狀態：🟢 待機動作播放中，已停用自動旋轉。")
@@ -24,7 +24,7 @@ else:
 # 設定你的 3D 模型檔名
 model_filename = "robot.glb"
 
-# 2. 檢查檔案是否存在並讀取
+# 2. 檢查 3D 檔案是否存在
 if os.path.exists(model_filename):
     with open(model_filename, "rb") as f:
         bytes_data = f.read()
@@ -38,9 +38,9 @@ if os.path.exists(model_filename):
         action_name = "mixamo.com"
         st.info("🎵 正在循環播放 Mixamo 動畫中...")
     else:
-        action_name = ""  # 預設不點擊時是靜止或預設狀態
+        action_name = ""  # 預設不點擊時是預設狀態
 
-    # 4. 嵌入 Google 3D 渲染器（加上了 animation-name）
+    # 4. 嵌入 Google 3D 渲染器
     html_code = f"""
     <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
     <div style="display: flex; justify-content: center; align-items: center; background-color: #1E1E24; border-radius: 15px; padding: 10px;">
@@ -55,16 +55,10 @@ if os.path.exists(model_filename):
     </div>
     """
     
-    # 畫出 3D 畫面
+    # 畫出 3D 畫面並維持高度
     st.components.v1.html(html_code, height=530)
     st.success("🟢 網頁已成功同步！")
 
 else:
-    st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
-    
-# 4. 畫出 3D 畫面（使用內嵌元件並強制設定高度，防止畫面被壓扁）
-    st.components.v1.html(html_code, height=530)
-    st.success("🟢 網頁已成功同步！")
-
-else:
+    # 這裡的 else 對應到最上方的 if os.path.exists(model_filename)
     st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
