@@ -11,7 +11,7 @@ st.write("系統提示：網頁正在從雲端載入 3D 模型，請稍等 3~5 �
 github_username = "rolfe0"  
 
 # 填入你在 GitHub 建立的英文專案名稱
-github_repo = "robot"       
+github_repo = "robot-app-UI"       
 # ==========================================================
 
 # 自動生成 GitHub 原生檔案的公開下載連結
