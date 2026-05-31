@@ -5,8 +5,8 @@ import json
 
 # 1. 設定網頁標題與外觀
 st.set_page_config(page_title="🤖 雲端語音接收看板", layout="centered")
-st.title("🤖 雲端語音與全身換膚同步面板")
-st.write("目前狀態：🟢 全身換膚核心已解鎖！修改 Firebase 控制台的 test 欄位即可測試全身大換膚。")
+st.title("🤖 雲端語音與整體材質同步面板")
+st.write("目前狀態：🟢 整體材質抽換核心已載入。修改 Firebase 控制台的 test 欄位即可測試。")
 
 # --- 讀取 Firebase 秘密金鑰 ---
 firebase_secret_str = st.secrets.get("FIREBASE_KEY")
@@ -72,5 +72,101 @@ if os.path.exists(model_filename):
 
         const modelViewer = document.querySelector("#live-robot");
         
-        const imgNormalSrc = "data:image/png;base64,{b64_normal}";
-        const imgTalkingSrc = "data:image/png;base64,{b64_talking}";
+        // 將 Base64 轉換成網頁可以直接讀取的 DataURL 字串
+        const imgNormalUrl = "data:image/png;base64,{b64_normal}";
+        const imgTalkingUrl = "data:image/png;base64,{b64_talking}";
+        
+        let isFirebaseInitialized = false;
+
+        modelViewer.addEventListener("load", () => {{
+            // 啟動低速動畫
+            const anims = modelViewer.availableAnimations;
+            let targetAnim = anims.find(name => name.toLowerCase().includes("mixamo.com.001")) ||
+                             anims.find(name => name.toLowerCase().includes("armature.001")) ||
+                             anims[0];
+            if (targetAnim) {{
+                modelViewer.animationName = targetAnim;
+                setTimeout(() => {{ modelViewer.play(); }}, 100);
+            }}
+
+            // 初始化：先讓模型套用整張 idle.png 的材質
+            changeGlobalTexture(imgNormalUrl);
+            
+            if (!isFirebaseInitialized) {{
+                startFirebaseListener();
+                isFirebaseInitialized = true;
+            }}
+        }});
+
+        // 💥 整體材質圖片直接抽換函數：直接覆寫底層的圖片 Source 網址
+        function changeGlobalTexture(textureDataUrl) {{
+            if (!modelViewer.model) return;
+            
+            modelViewer.model.materials.forEach(material => {{
+                // 檢查 PBR 材質與基礎貼圖物件是否存在
+                if (material.pbrMetallicRoughness && 
+                    material.pbrMetallicRoughness.baseColorTexture && 
+                    material.pbrMetallicRoughness.baseColorTexture.texture && 
+                    material.pbrMetallicRoughness.baseColorTexture.texture.source) {{
+                    
+                    // 🎯 最暴力、最有效的寫法：直接改寫底層圖片的 URI
+                    material.pbrMetallicRoughness.baseColorTexture.texture.source.setURI(textureDataUrl);
+                }}
+            }});
+        }}
+
+        // Firebase 監聽
+        function startFirebaseListener() {{
+            const firebaseConfig = {fb_config_json};
+            if (!firebaseConfig.databaseURL) return;
+
+            const app = initializeApp(firebaseConfig);
+            const database = getDatabase(app);
+            const voiceRef = ref(database, 'test');
+
+            let isFirstLoad = true;
+
+            onValue(voiceRef, (snapshot) => {{
+                const voiceText = snapshot.val();
+                if (voiceText) {{
+                    if (isFirstLoad) {{
+                        isFirstLoad = false;
+                        return;
+                    }}
+                    speakAndChangeFace(voiceText);
+                }}
+            }});
+        }}
+
+        function speakAndChangeFace(text) {{
+            if (!('speechSynthesis' in window)) return;
+
+            window.speechSynthesis.cancel();
+            
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = "zh-TW";
+            utterance.rate = 0.9;
+
+            // 📣 說話開始 -> 整張貼圖無條件切換成 talk.png 
+            utterance.onstart = () => {{
+                changeGlobalTexture(imgTalkingUrl);
+            }};
+
+            // 🛑 說話結束 -> 整張貼圖無條件切回 idle.png
+            utterance.onend = () => {{
+                changeGlobalTexture(imgNormalUrl);
+            }};
+            utterance.onerror = () => {{
+                changeGlobalTexture(imgNormalUrl);
+            }};
+
+            window.speechSynthesis.speak(utterance);
+        }}
+    </script>
+    """
+    
+    st.components.v1.html(html_code, height=530)
+    st.success("📡 雲端即時連動看板已完全就緒！")
+
+else:
+    st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
