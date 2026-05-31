@@ -5,8 +5,8 @@ import json
 
 # 1. 設定網頁標題與外觀
 st.set_page_config(page_title="🤖 雲端語音接收看板", layout="centered")
-st.title("🤖 雲端語音與動態口型同步面板")
-st.write("目前狀態：🟢 動態頻繁口型切換已解鎖！修改 Firebase 控制台的 test 欄位即可測試逼真的說話動態。")
+st.title("🤖 雲端語音檔案接收與動態口型面板")
+st.write("目前狀態：🟢 語音檔案播放核心已就緒！只要 Firebase 的 test 欄位寫入音訊網址，這裡就會自動播放並高頻動嘴。")
 
 # --- 讀取 Firebase 秘密金鑰 ---
 firebase_secret_str = st.secrets.get("FIREBASE_KEY")
@@ -49,7 +49,7 @@ if os.path.exists(model_filename):
         bytes_data = f.read()
     b64_model = base64.b64encode(bytes_data).decode()
 
-    # 4. 嵌入 3D 渲染器與連動腳本
+    # 4. 嵌入 3D 渲染器與音訊連動腳本
     html_code = f"""
     <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
     
@@ -79,8 +79,8 @@ if os.path.exists(model_filename):
         let textureNormalObj = null;
         let textureTalkingObj = null;
 
-        // 💥 宣告一個全域的定時器變數，用來控制頻繁切換貼圖
         let mouthTimer = null; 
+        let currentAudio = null; // 用於存放 HTML5 Audio 物件
 
         modelViewer.addEventListener("load", async () => {{
             // 動態安全啟動
@@ -100,7 +100,7 @@ if os.path.exists(model_filename):
                 if (modelViewer.model && modelViewer.model.materials.length > 0) {{
                     textureNormalObj = await modelViewer.createTexture(imgNormalUrl);
                     textureTalkingObj = await modelViewer.createTexture(imgTalkingUrl);
-                    safeApplyTexture(textureNormalObj); // 預設套用靜止貼圖
+                    safeApplyTexture(textureNormalObj); 
                 }}
             }} catch (err) {{ console.log("材質初始化略過零件"); }}
             
@@ -110,7 +110,6 @@ if os.path.exists(model_filename):
             }}
         }});
 
-        // 安全套用材質貼圖函數
         function safeApplyTexture(targetTexture) {{
             if (!targetTexture || !modelViewer.model || !modelViewer.model.materials) return;
             modelViewer.model.materials.forEach(mat => {{
@@ -135,75 +134,82 @@ if os.path.exists(model_filename):
                 let isFirstLoad = true;
 
                 onValue(voiceRef, (snapshot) => {{
-                    const voiceText = snapshot.val();
-                    if (voiceText) {{
+                    const audioUrl = snapshot.val(); // 這裡拿到的會是語音檔的網路網址
+                    if (audioUrl) {{
                         if (isFirstLoad) {{
                             isFirstLoad = false;
                             return;
                         }}
-                        speakAndChangeFace(voiceText);
+                        // 🛠️ 呼叫「真·語音檔播放與口型連動」函數
+                        playAudioAndChangeMouth(audioUrl);
                     }}
                 }});
             }} catch(err) {{ console.error(err); }}
         }}
 
-        function speakAndChangeFace(text) {{
-            if (!('speechSynthesis' in window)) return;
-
+        // 💥 核心功能：播放真實語音檔，並利用音訊事件精準連動口型
+        function playAudioAndChangeMouth(url) {{
             try {{
-                window.speechSynthesis.cancel();
-                
-                // 💥 播放新語音前，先清除上一次可能還在跑的定時器，避免疊加錯亂
+                // 1. 如果前一個語音還在播，先強制停止並清空定時器
+                if (currentAudio) {{
+                    currentAudio.pause();
+                    currentAudio = null;
+                }}
                 if (mouthTimer) {{
                     clearInterval(mouthTimer);
                     mouthTimer = null;
                 }}
-                
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.lang = "zh-TW";
-                utterance.rate = 0.95;
 
-                // 📣 當語音「開始播放」時：開啟定時器，每隔 150 毫秒高速輪換皮膚
-                utterance.onstart = () => {{
+                // 2. 建立新音訊物件並載入傳入的網址
+                currentAudio = new Audio(url);
+                currentAudio.crossOrigin = "anonymous"; // 允許跨網域音訊播放
+
+                // 📣 當音訊「開始播放」時：開啟定時器讓嘴巴高頻動起來
+                currentAudio.addEventListener("play", () => {{
                     let isTalkFace = true;
-                    safeApplyTexture(textureTalkingObj); // 一開始先切到說話臉
+                    safeApplyTexture(textureTalkingObj);
                     
-                    // 每 150 毫秒 (0.15秒) 執行一次交替切換
                     mouthTimer = setInterval(() => {{
                         if (isTalkFace) {{
-                            safeApplyTexture(textureNormalObj);  // 切換回 idle.png
+                            safeApplyTexture(textureNormalObj);
                         }} else {{
-                            safeApplyTexture(textureTalkingObj); // 切換到 talk.png
+                            safeApplyTexture(textureTalkingObj);
                         }}
-                        isTalkFace = !isTalkFace; // 狀態反轉
-                    }}, 150); 
-                }};
+                        isTalkFace = !isTalkFace;
+                    }}, 140); // 稍微調快到 140ms，讓口型看起來更緊湊自然
+                }});
 
-                // 🛑 當語音「播放結束」或「被中斷」時：關閉定時器，並強制收回待機臉
-                utterance.onend = () => {{
-                    if (mouthTimer) {{
-                        clearInterval(mouthTimer);
-                        mouthTimer = null;
-                    }}
-                    safeApplyTexture(textureNormalObj); // 強制固定回 idle.png
-                }};
-                
-                utterance.onerror = () => {{
+                // 🛑 當音訊「播放結束」時：清除定時器，強制閉嘴回 idle.png
+                currentAudio.addEventListener("ended", () => {{
                     if (mouthTimer) {{
                         clearInterval(mouthTimer);
                         mouthTimer = null;
                     }}
                     safeApplyTexture(textureNormalObj);
-                }};
+                }});
 
-                window.speechSynthesis.speak(utterance);
-            }} catch (err) {{ console.error(err); }}
+                // 錯誤處理保底
+                currentAudio.addEventListener("error", () => {{
+                    if (mouthTimer) {{
+                        clearInterval(mouthTimer);
+                        mouthTimer = null;
+                    }}
+                    safeApplyTexture(textureNormalObj);
+                    console.error("語音檔載入或播放失敗，網址可能無效");
+                }});
+
+                // 3. 執行播放
+                currentAudio.play().catch(err => {{
+                    console.log("瀏覽器阻擋自動播放，需要使用者先點擊網頁:", err);
+                }});
+
+            }} catch (err) {{ console.error("音訊初始化失敗:", err); }}
         }}
     </script>
     """
     
     st.components.v1.html(html_code, height=530)
-    st.success("📡 雲端即時連動看板已完全就緒！")
+    st.success("📡 雲端即時語音音訊監聽看板已完全就緒！")
 
 else:
     st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
