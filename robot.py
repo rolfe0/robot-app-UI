@@ -53,4 +53,157 @@ if os.path.exists(model_filename):
     html_code = f"""
     <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
     
-    <div style="display: flex; justify-content: center; align-items: center; background-color: #1E1E
+    <div style="display: flex; justify-content: center; align-items: center; background-color: #1E1E24; border-radius: 15px; padding: 10px;">
+        <model-viewer 
+            id="live-robot"
+            src="data:application/octet-stream;base64,{b64_model}" 
+            alt="3D 機器人模型" 
+            camera-controls 
+            autoplay
+            loop
+            time-scale="0.01"
+            style="width: 100%; height: 500px;">
+        </model-viewer>
+    </div>
+
+    <script type="module">
+        import {{ initializeApp }} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import {{ getDatabase, ref, onValue }} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+
+        const modelViewer = document.querySelector("#live-robot");
+        
+        const imgNormalUrl = "data:image/png;base64,{b64_normal}";
+        const imgTalkingUrl = "data:image/png;base64,{b64_talking}";
+        
+        let isFirebaseInitialized = false;
+        let textureNormalObj = null;
+        let textureTalkingObj = null;
+
+        // 💥 宣告一個全域的定時器變數，用來控制頻繁切換貼圖
+        let mouthTimer = null; 
+
+        modelViewer.addEventListener("load", async () => {{
+            // 動態安全啟動
+            try {{
+                const anims = modelViewer.availableAnimations;
+                let targetAnim = anims.find(name => name.toLowerCase().includes("mixamo.com.001")) ||
+                                 anims.find(name => name.toLowerCase().includes("armature.001")) ||
+                                 anims[0];
+                if (targetAnim) {{
+                    modelViewer.animationName = targetAnim;
+                    setTimeout(() => {{ modelViewer.play(); }}, 100);
+                }}
+            }} catch (e) {{ console.log("動畫延遲"); }}
+
+            // 材質初始化
+            try {{
+                if (modelViewer.model && modelViewer.model.materials.length > 0) {{
+                    textureNormalObj = await modelViewer.createTexture(imgNormalUrl);
+                    textureTalkingObj = await modelViewer.createTexture(imgTalkingUrl);
+                    safeApplyTexture(textureNormalObj); // 預設套用靜止貼圖
+                }}
+            }} catch (err) {{ console.log("材質初始化略過零件"); }}
+            
+            if (!isFirebaseInitialized) {{
+                startFirebaseListener();
+                isFirebaseInitialized = true;
+            }}
+        }});
+
+        // 安全套用材質貼圖函數
+        function safeApplyTexture(targetTexture) {{
+            if (!targetTexture || !modelViewer.model || !modelViewer.model.materials) return;
+            modelViewer.model.materials.forEach(mat => {{
+                try {{
+                    if (mat && mat.pbrMetallicRoughness && mat.pbrMetallicRoughness.baseColorTexture) {{
+                        mat.pbrMetallicRoughness.baseColorTexture.setTexture(targetTexture);
+                    }}
+                }} catch(e) {{ }}
+            }});
+        }}
+
+        // Firebase 監聽
+        function startFirebaseListener() {{
+            const firebaseConfig = {fb_config_json};
+            if (!firebaseConfig.databaseURL) return;
+
+            try {{
+                const app = initializeApp(firebaseConfig);
+                const database = getDatabase(app);
+                const voiceRef = ref(database, 'test');
+
+                let isFirstLoad = true;
+
+                onValue(voiceRef, (snapshot) => {{
+                    const voiceText = snapshot.val();
+                    if (voiceText) {{
+                        if (isFirstLoad) {{
+                            isFirstLoad = false;
+                            return;
+                        }}
+                        speakAndChangeFace(voiceText);
+                    }}
+                }});
+            }} catch(err) {{ console.error(err); }}
+        }}
+
+        function speakAndChangeFace(text) {{
+            if (!('speechSynthesis' in window)) return;
+
+            try {{
+                window.speechSynthesis.cancel();
+                
+                // 💥 播放新語音前，先清除上一次可能還在跑的定時器，避免疊加錯亂
+                if (mouthTimer) {{
+                    clearInterval(mouthTimer);
+                    mouthTimer = null;
+                }}
+                
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.lang = "zh-TW";
+                utterance.rate = 0.95;
+
+                // 📣 當語音「開始播放」時：開啟定時器，每隔 150 毫秒高速輪換皮膚
+                utterance.onstart = () => {{
+                    let isTalkFace = true;
+                    safeApplyTexture(textureTalkingObj); // 一開始先切到說話臉
+                    
+                    // 每 150 毫秒 (0.15秒) 執行一次交替切換
+                    mouthTimer = setInterval(() => {{
+                        if (isTalkFace) {{
+                            safeApplyTexture(textureNormalObj);  // 切換回 idle.png
+                        }} else {{
+                            safeApplyTexture(textureTalkingObj); // 切換到 talk.png
+                        }}
+                        isTalkFace = !isTalkFace; // 狀態反轉
+                    }}, 150); 
+                }};
+
+                // 🛑 當語音「播放結束」或「被中斷」時：關閉定時器，並強制收回待機臉
+                utterance.onend = () => {{
+                    if (mouthTimer) {{
+                        clearInterval(mouthTimer);
+                        mouthTimer = null;
+                    }}
+                    safeApplyTexture(textureNormalObj); // 強制固定回 idle.png
+                }};
+                
+                utterance.onerror = () => {{
+                    if (mouthTimer) {{
+                        clearInterval(mouthTimer);
+                        mouthTimer = null;
+                    }}
+                    safeApplyTexture(textureNormalObj);
+                }};
+
+                window.speechSynthesis.speak(utterance);
+            }} catch (err) {{ console.error(err); }}
+        }}
+    </script>
+    """
+    
+    st.components.v1.html(html_code, height=530)
+    st.success("📡 雲端即時連動看板已完全就緒！")
+
+else:
+    st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
