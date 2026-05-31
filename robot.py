@@ -5,8 +5,8 @@ import json
 
 # 1. 設定網頁標題與外觀
 st.set_page_config(page_title="🤖 雲端語音接收看板", layout="centered")
-st.title("🤖 雲端語音同步面板 (GitHub 音訊優化版)")
-st.write("目前狀態：🟢 免費音訊機制已就緒！只要修改 Firebase 的 test 欄位，就會自動播放專案中的 talk.mp3 並頻繁動嘴。")
+st.title("🤖 雲端語音同步面板 (遠端音訊串流版)")
+st.write("目前狀態：🟢 遠端音訊動態接收核心已就緒！等待外部資料庫將語音 Base64 寫入 Firebase test 欄位...")
 
 # --- 讀取 Firebase 秘密金鑰 ---
 firebase_secret_str = st.secrets.get("FIREBASE_KEY")
@@ -31,12 +31,10 @@ else:
 model_filename = "robot.glb"
 texture_normal = "idle.png"
 texture_talking = "talk.png"
-audio_filename = "talk.mp3"  # 👈 你的語音檔名
 
-# 2. 檢查並準備貼圖與音訊的 Base64 資料
+# 2. 檢查並準備貼圖
 b64_normal = ""
 b64_talking = ""
-b64_audio = ""
 
 if os.path.exists(texture_normal):
     with open(texture_normal, "rb") as f:
@@ -44,13 +42,6 @@ if os.path.exists(texture_normal):
 if os.path.exists(texture_talking):
     with open(texture_talking, "rb") as f:
         b64_talking = base64.b64encode(f.read()).decode()
-
-# 🛠️ 關鍵改動：如果專案目錄下有 talk.mp3，直接將它轉成 Base64 內嵌進網頁，速度最快！
-if os.path.exists(audio_filename):
-    with open(audio_filename, "rb") as f:
-        b64_audio = base64.b64encode(f.read()).decode()
-else:
-    st.error(f"⚠️ 專案中找不到【{audio_filename}】語音檔！請記得將語音檔上傳到 GitHub。")
 
 # 3. 檢查 3D 檔案是否存在並讀取
 if os.path.exists(model_filename):
@@ -83,9 +74,6 @@ if os.path.exists(model_filename):
         
         const imgNormalUrl = "data:image/png;base64,{b64_normal}";
         const imgTalkingUrl = "data:image/png;base64,{b64_talking}";
-        
-        // 內嵌的語音檔案音訊來源
-        const audioSourceUrl = "data:audio/mp3;base64,{b64_audio}";
         
         let isFirebaseInitialized = false;
         let textureNormalObj = null;
@@ -144,21 +132,26 @@ if os.path.exists(model_filename):
                 let isFirstLoad = true;
 
                 onValue(voiceRef, (snapshot) => {{
-                    const val = snapshot.val();
-                    if (val !== null) {{
+                    const incomingAudioData = snapshot.val(); // 這裡拿到的是對方塞進來的動態 Base64 聲音字串
+                    if (incomingAudioData) {{
                         if (isFirstLoad) {{
                             isFirstLoad = false;
                             return;
                         }}
-                        // 🛠️ 只要 Firebase test 有動靜，就直接引爆播放內建的 talk.mp3
-                        playLocalAudio();
+                        
+                        // 🛠️ 檢查拿到的資料是不是聲音編碼（防止對方亂傳純文字導致崩潰）
+                        if (incomingAudioData.startsWith("data:audio")) {{
+                            playIncomingAudio(incomingAudioData);
+                        }} else {{
+                            console.log("偵測到非音訊資料，略過不播放");
+                        }}
                     }}
                 }});
             }} catch(err) {{ console.error(err); }}
         }}
 
-        // 💥 直接撥放內嵌音訊，並觸發頻繁切換口型
-        function playLocalAudio() {{
+        // 💥 精準播放外部丟進來的動態語音，並連動嘴巴
+        function playIncomingAudio(audioUrlStr) {{
             try {{
                 if (currentAudio) {{
                     currentAudio.pause();
@@ -169,7 +162,8 @@ if os.path.exists(model_filename):
                     mouthTimer = null;
                 }}
 
-                currentAudio = new Audio(audioSourceUrl);
+                // 直接將接收到的一長串遠端聲音編碼餵給 Audio 物件
+                currentAudio = new Audio(audioUrlStr);
 
                 currentAudio.addEventListener("play", () => {{
                     let isTalkFace = true;
@@ -199,9 +193,10 @@ if os.path.exists(model_filename):
                         mouthTimer = null;
                     }}
                     safeApplyTexture(textureNormalObj);
+                    console.error("解碼播放失敗，語音資料可能毀損。");
                 }});
 
-                currentAudio.play().catch(err => console.log(err));
+                currentAudio.play().catch(err => console.log("等待點擊網頁觸發語音", err));
 
             }} catch (err) {{ console.error(err); }}
         }}
@@ -209,7 +204,7 @@ if os.path.exists(model_filename):
     """
     
     st.components.v1.html(html_code, height=530)
-    st.success("📡 雲端即時語音連動看板 (GitHub 音訊優化版) 已完全就緒！")
+    st.success("📡 遠端動態音訊串流連動看板已完全就緒！")
 
 else:
     st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
