@@ -98,4 +98,98 @@ if os.path.exists(model_filename):
         modelViewer.addEventListener("load", async () => {{
             const anims = modelViewer.availableAnimations;
             let targetAnim = anims.find(name => name.toLowerCase().includes("mixamo.com.001")) ||
-                             anims.
+                             anims.find(name => name.toLowerCase().includes("armature.001")) ||
+                             anims[0];
+            if (targetAnim) {{
+                modelViewer.animationName = targetAnim;
+                setTimeout(() => {{ modelViewer.play(); }}, 100);
+            }}
+
+            if (modelViewer.model) {{
+                textureNormalObj = await modelViewer.createTexture(imgNormalSrc);
+                textureTalkingObj = await modelViewer.createTexture(imgTalkingSrc);
+                changeFace(textureNormalObj); // 預設先秀出你的 idle.png 臉
+            }}
+            
+            if (!isFirebaseInitialized) {{
+                startFirebaseListener();
+                isFirebaseInitialized = true;
+            }}
+        }});
+
+        // 切換材質貼圖的函數
+        function changeFace(targetTexture) {{
+            if (!targetTexture || !modelViewer.model) return;
+            modelViewer.model.materials.forEach(material => {{
+                const matName = material.name.toLowerCase();
+                if (matName.includes("face") || matName.includes("screen") || matName.includes("head") || matName.includes("emissive")) {{
+                    if (material.pbrMetallicRoughness.baseColorTexture) {{
+                        material.pbrMetallicRoughness.baseColorTexture.setTexture(targetTexture);
+                    }}
+                }}
+            }});
+        }}
+
+        // Firebase 即時監聽
+        function startFirebaseListener() {{
+            const firebaseConfig = {fb_config_json};
+            
+            if (!firebaseConfig.databaseURL) {{
+                console.error("Firebase 設定不完整");
+                return;
+            }}
+
+            const app = initializeApp(firebaseConfig);
+            const database = getDatabase(app);
+            const voiceRef = ref(database, 'current_voice');
+
+            let isFirstLoad = true;
+
+            onValue(voiceRef, (snapshot) => {{
+                const data = snapshot.val();
+                
+                if (data && data.text) {{
+                    if (isFirstLoad) {{
+                        isFirstLoad = false;
+                        console.log("Firebase 首次連線成功");
+                        return;
+                    }}
+                    speakAndChangeFace(data.text);
+                }}
+            }});
+        }}
+
+        // 發聲並同步切換貼圖
+        function speakAndChangeFace(text) {{
+            if (!('speechSynthesis' in window)) return;
+
+            window.speechSynthesis.cancel();
+            
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = "zh-TW";
+            utterance.rate = 0.9;
+
+            // 當語音「開始播放」時：切換成說話貼圖 (talk.png)
+            utterance.onstart = () => {{
+                changeFace(textureTalkingObj);
+            }};
+
+            // 當語音「播放結束」：自動切回待機貼圖 (idle.png)
+            utterance.onend = () => {{
+                changeFace(textureNormalObj);
+            }};
+            utterance.onerror = () => {{
+                changeFace(textureNormalObj);
+            }};
+
+            window.speechSynthesis.speak(utterance);
+        }}
+    </script>
+    """
+    
+    # 5. 畫出穩定版 3D 畫面並移除原本有 Bug 的 Python 文字行
+    st.components.v1.html(html_code, height=530)
+    st.success("📡 雲端即時連動看板已完全就緒！")
+
+else:
+    st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
