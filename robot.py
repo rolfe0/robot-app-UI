@@ -88,4 +88,109 @@ if os.path.exists(model_filename):
                 let targetAnim = anims.find(name => name.toLowerCase().includes("mixamo.com.001")) ||
                                  anims.find(name => name.toLowerCase().includes("armature.001")) ||
                                  anims[0];
-                if (
+                if (targetAnim) {{
+                    modelViewer.animationName = targetAnim;
+                    setTimeout(() => {{ modelViewer.play(); }}, 100);
+                }}
+            }} catch (e) {{ console.log("動畫延遲"); }}
+
+            // 2. 💡 官方推薦最安全的動態材質注入法
+            try {{
+                if (modelViewer.model && modelViewer.model.materials && modelViewer.model.materials.length > 0) {{
+                    // 直接創建 3D 材質物件
+                    textureNormalObj = await modelViewer.createTexture(imgNormalUrl);
+                    textureTalkingObj = await modelViewer.createTexture(imgTalkingUrl);
+                    
+                    // 先套用初始靜止狀態的貼圖
+                    safeApplyTexture(textureNormalObj);
+                }}
+            }} catch (err) {{
+                console.log("材質初始化有跳過零件");
+            }}
+            
+            // 3. 啟動 Firebase 監聽（確保放在獨立區塊，絕對不被上面卡死）
+            if (!isFirebaseInitialized) {{
+                startFirebaseListener();
+                isFirebaseInitialized = true;
+            }}
+        }});
+
+        // 💥 安全套用函數：只碰最外層的 baseColorTexture，其餘底層節點不亂碰，防止崩潰
+        function safeApplyTexture(targetTexture) {{
+            if (!targetTexture || !modelViewer.model || !modelViewer.model.materials) return;
+            
+            modelViewer.model.materials.forEach(mat => {{
+                try {{
+                    if (mat && mat.pbrMetallicRoughness && mat.pbrMetallicRoughness.baseColorTexture) {{
+                        // 🎯 使用最標準的 setTexture，不碰底層的 .texture.source 避免部分流覽器死機
+                        mat.pbrMetallicRoughness.baseColorTexture.setTexture(targetTexture);
+                    }}
+                }} catch(e) {{
+                    // 自動略過不支援的微小材質零件，不拋出錯誤
+                }}
+            }});
+        }}
+
+        // Firebase 監聽
+        function startFirebaseListener() {{
+            const firebaseConfig = {fb_config_json};
+            if (!firebaseConfig.databaseURL) return;
+
+            try {{
+                const app = initializeApp(firebaseConfig);
+                const database = getDatabase(app);
+                const voiceRef = ref(database, 'test');
+
+                let isFirstLoad = true;
+
+                onValue(voiceRef, (snapshot) => {{
+                    const voiceText = snapshot.val();
+                    if (voiceText) {{
+                        if (isFirstLoad) {{
+                            isFirstLoad = false;
+                            return;
+                        }}
+                        speakAndChangeFace(voiceText);
+                    }}
+                }});
+            }} catch(err) {{
+                console.error("Firebase 連線錯誤:", err);
+            }}
+        }}
+
+        function speakAndChangeFace(text) {{
+            if (!('speechSynthesis' in window)) return;
+
+            try {{
+                window.speechSynthesis.cancel();
+                
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.lang = "zh-TW";
+                utterance.rate = 0.9;
+
+                // 📣 說話開始
+                utterance.onstart = () => {{
+                    safeApplyTexture(textureTalkingObj);
+                }};
+
+                // 🛑 說話結束
+                utterance.onend = () => {{
+                    safeApplyTexture(textureNormalObj);
+                }};
+                utterance.onerror = () => {{
+                    safeApplyTexture(textureNormalObj);
+                }};
+
+                window.speechSynthesis.speak(utterance);
+            }} catch (err) {{
+                console.error("語音播放失敗:", err);
+            }}
+        }}
+    </script>
+    """
+    
+    st.components.v1.html(html_code, height=530)
+    st.success("📡 雲端即時連動看板已完全就緒！")
+
+else:
+    st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
