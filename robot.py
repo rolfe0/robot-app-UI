@@ -5,8 +5,8 @@ import json
 
 # 1. 設定網頁標題與外觀
 st.set_page_config(page_title="🤖 雲端語音接收看板", layout="centered")
-st.title("🤖 雲端語音同步面板 (動態語音連續接收版)")
-st.write("目前狀態：🟢 連續監聽核心已重構！等待外部資料庫隨時寫入新的語音 Base64 檔案...")
+st.title("🤖 雲端語音同步面板 (防重複干擾穩定版)")
+st.write("目前狀態：🟢 連續監聽優化核心已就緒！已針對「重複寫入相同語音」進行防干擾處理。")
 
 # --- 讀取 Firebase 秘密金鑰 ---
 firebase_secret_str = st.secrets.get("FIREBASE_KEY")
@@ -49,7 +49,7 @@ if os.path.exists(model_filename):
         bytes_data = f.read()
     b64_model = base64.b64encode(bytes_data).decode()
 
-    # 4. 採用純字串定義 HTML（拒絕 f-string 大括號衝突），加入即時除錯面板
+    # 4. 採用純字串定義 HTML
     raw_html = """
     <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
     
@@ -93,6 +93,9 @@ if os.path.exists(model_filename):
         let mouthTimer = null; 
         let currentAudio = null;
         let isAudioUnlocked = false;
+        
+        // 🌟 新增：用來記錄最後一次「真正播放」的音訊字串
+        let lastPlayedAudioStr = ""; 
 
         // 使用者點擊解鎖喇叭通道
         unlockBtn.addEventListener("click", () => {
@@ -101,7 +104,6 @@ if os.path.exists(model_filename):
             unlockBtn.innerText = "🟢 喇叭已解鎖！隨時等待外部資料庫傳入連續語音 🟢";
             statusDebug.innerText = "系統狀態: 喇叭已解鎖，即時監聽 Firebase 中...";
             
-            // 播放極短空白音激活音訊通道
             let dummy = new Audio("data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YQAAAAA=");
             dummy.play().catch(e => console.log("預激活"));
         });
@@ -124,7 +126,7 @@ if os.path.exists(model_filename):
                     textureTalkingObj = await modelViewer.createTexture(imgTalkingUrl);
                     safeApplyTexture(textureNormalObj); 
                 }
-            } catch (err) { }
+            } catch (err) {}
             
             if (!isFirebaseInitialized) {
                 startFirebaseListener();
@@ -164,23 +166,22 @@ if os.path.exists(model_filename):
                         return;
                     }
 
-                    // 強制轉字串並清洗可能的引號與空白
+                    // 強制轉字串並清洗
                     let incomingAudioData = rawVal.toString().trim().replace(/^['"]|['"]$/g, '');
                     
-                    // 🌟 即時將收到的資料狀態吐在黑框除錯面板上
                     dataDebug.innerText = "最新收到資料開頭: " + incomingAudioData.substring(0, 50) + "... (長度: " + incomingAudioData.length + ")";
 
                     // 第一次載入如果是網頁開啟前的舊資料，更新狀態後略過不播
                     if (isFirstLoad) {
                         isFirstLoad = false;
+                        lastPlayedAudioStr = incomingAudioData; // 記住初始值
                         statusDebug.innerText = "🟢 雲端同步完成！請嘗試更改 Firebase 資料庫觸發播音。";
                         return;
                     }
                     
-                    // 🌟 只要長度大於 100（代表是一串 Base64），就直接強行播音，不再進行重複值攔截
                     if (incomingAudioData.length > 100) {
                         if (!isAudioUnlocked) {
-                            statusDebug.indexText = "⚠️ 偵測到語音，但請先點選上方「綠色按鈕」解鎖喇叭！";
+                            statusDebug.innerText = "⚠️ 偵測到語音，但請先點選上方「綠色按鈕」解鎖喇叭！";
                             return;
                         }
                         
@@ -189,6 +190,15 @@ if os.path.exists(model_filename):
                             incomingAudioData = "data:audio/wav;base64," + incomingAudioData;
                         }
                         
+                        // 🌟【關鍵智慧判定邏輯】
+                        if (currentAudio && !currentAudio.paused && !currentAudio.ended && incomingAudioData === lastPlayedAudioStr) {
+                            // 如果「正在播放中」且「資料跟上一次完全一樣」，代表是重複觸發，直接忽略，讓聲音繼續播完！
+                            statusDebug.innerText = "🎵 收到重複語音訊號，保持目前音訊完整播放中...";
+                            return;
+                        }
+                        
+                        // 否則，這是一則全新語音，或者是播完之後的重新觸發 ➡️ 執行播放
+                        lastPlayedAudioStr = incomingAudioData;
                         playIncomingAudio(incomingAudioData);
                     } else {
                         statusDebug.innerText = "⚠️ 收到非音訊格式（字串過短），已略過。";
@@ -199,6 +209,7 @@ if os.path.exists(model_filename):
 
         function playIncomingAudio(audioUrlStr) {
             try {
+                // 中斷前一條
                 if (currentAudio) {
                     currentAudio.pause();
                     currentAudio = null;
@@ -216,7 +227,7 @@ if os.path.exists(model_filename):
                     safeApplyTexture(textureTalkingObj);
                     
                     mouthTimer = setInterval(() => {
-                        if (currentAudio.paused || currentAudio.ended) {
+                        if (!currentAudio || currentAudio.paused || currentAudio.ended) {
                             clearInterval(mouthTimer);
                             mouthTimer = null;
                             safeApplyTexture(textureNormalObj);
@@ -264,4 +275,3 @@ if os.path.exists(model_filename):
     st.success("📡 終極連續語音串流看板已完全就緒！")
 else:
     st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
-    
