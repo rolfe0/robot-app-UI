@@ -179,3 +179,7 @@ if os.path.exists(model_filename):
                         isFirstLoad = false;
                         lastPlayedAudioStr = incomingAudioData;
                         return;
+                    }
+                    
+                    if (incomingAudioData.length > 100) {
+                        if (!isAudioUnlocked) {
