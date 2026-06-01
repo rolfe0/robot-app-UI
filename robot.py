@@ -5,8 +5,8 @@ import json
 
 # 1. 設定網頁標題與外觀
 st.set_page_config(page_title="🤖 雲端語音接收看板", layout="centered")
-st.title("🤖 雲端語音同步面板 (防重複干擾穩定版)")
-st.write("目前狀態：🟢 連續監聽優化核心已就緒！已針對「重複寫入相同語音」進行防干擾處理。")
+st.title("🤖 雲端語音同步面板 (穩定說話貼圖版)")
+st.write("目前狀態：🟢 連續監聽優化核心已就緒！說話時將固定顯示說話貼圖，不再閃爍。")
 
 # --- 讀取 Firebase 秘密金鑰 ---
 firebase_secret_str = st.secrets.get("FIREBASE_KEY")
@@ -49,7 +49,7 @@ if os.path.exists(model_filename):
         bytes_data = f.read()
     b64_model = base64.b64encode(bytes_data).decode()
 
-    # 4. 採用純字串定義 HTML
+    # 4. 採用純字串定義 HTML (修改說話貼圖行為：不再閃爍，播放時固定使用說話貼圖)
     raw_html = """
     <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
     
@@ -94,7 +94,7 @@ if os.path.exists(model_filename):
         let currentAudio = null;
         let isAudioUnlocked = false;
         
-        // 🌟 新增：用來記錄最後一次「真正播放」的音訊字串
+        // 用來記錄最後一次「真正播放」的音訊字串
         let lastPlayedAudioStr = ""; 
 
         // 使用者點擊解鎖喇叭通道
@@ -190,14 +190,12 @@ if os.path.exists(model_filename):
                             incomingAudioData = "data:audio/wav;base64," + incomingAudioData;
                         }
                         
-                        // 🌟【關鍵智慧判定邏輯】
+                        // 智慧判定邏輯 (避免重複播放)
                         if (currentAudio && !currentAudio.paused && !currentAudio.ended && incomingAudioData === lastPlayedAudioStr) {
-                            // 如果「正在播放中」且「資料跟上一次完全一樣」，代表是重複觸發，直接忽略，讓聲音繼續播完！
                             statusDebug.innerText = "🎵 收到重複語音訊號，保持目前音訊完整播放中...";
                             return;
                         }
                         
-                        // 否則，這是一則全新語音，或者是播完之後的重新觸發 ➡️ 執行播放
                         lastPlayedAudioStr = incomingAudioData;
                         playIncomingAudio(incomingAudioData);
                     } else {
@@ -209,7 +207,7 @@ if os.path.exists(model_filename):
 
         function playIncomingAudio(audioUrlStr) {
             try {
-                // 中斷前一條
+                // 中斷前一條音訊，並清除任何計時器
                 if (currentAudio) {
                     currentAudio.pause();
                     currentAudio = null;
@@ -221,42 +219,27 @@ if os.path.exists(model_filename):
 
                 currentAudio = new Audio(audioUrlStr);
 
+                // 播放開始時：固定套用說話貼圖，不閃爍
                 currentAudio.addEventListener("play", () => {
                     statusDebug.innerText = "🎵 雲端連續語音同步播放中，機器人說話中...";
-                    let isTalkFace = true;
+                    // 直接設定為說話貼圖，不要閃爍
                     safeApplyTexture(textureTalkingObj);
-                    
-                    mouthTimer = setInterval(() => {
-                        if (!currentAudio || currentAudio.paused || currentAudio.ended) {
-                            clearInterval(mouthTimer);
-                            mouthTimer = null;
-                            safeApplyTexture(textureNormalObj);
-                        } else {
-                            isTalkFace = !isTalkFace;
-                            safeApplyTexture(isTalkFace ? textureTalkingObj : textureNormalObj);
-                        }
-                    }, 140);
                 });
 
+                // 播放結束時：恢復一般貼圖
                 currentAudio.addEventListener("ended", () => {
-                    if (mouthTimer) {
-                        clearInterval(mouthTimer);
-                        mouthTimer = null;
-                    }
                     safeApplyTexture(textureNormalObj);
                     statusDebug.innerText = "🟢 當前語音播放完畢，持續監聽下一則指令...";
                 });
 
+                // 播放錯誤時：恢復一般貼圖
                 currentAudio.addEventListener("error", () => {
-                    if (mouthTimer) {
-                        clearInterval(mouthTimer);
-                        mouthTimer = null;
-                    }
                     safeApplyTexture(textureNormalObj);
                     statusDebug.innerText = "❌ 音訊解碼失敗。請確認寫入的 Base64 格式是否正確。";
                 });
 
                 currentAudio.play().catch(err => {
+                    safeApplyTexture(textureNormalObj);
                     statusDebug.innerText = "❌ 播放失敗: " + err.message;
                 });
 
@@ -272,6 +255,7 @@ if os.path.exists(model_filename):
                         .replace("__FB_CONFIG_JSON__", fb_config_json)
     
     st.components.v1.html(html_code, height=580)
-    st.success("📡 終極連續語音串流看板已完全就緒！")
+    st.success("📡 終極連續語音串流看板已完全就緒！(說話時不閃爍，固定顯示說話貼圖)")
 else:
     st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
+    
