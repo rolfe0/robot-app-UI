@@ -54,9 +54,8 @@ if os.path.exists(model_filename):
     <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
     
     <div style="display: flex; flex-direction: column; align-items: center; background-color: #1E1E24; border-radius: 15px; padding: 15px;">
-        <!-- 🛠️ 強制解鎖按鈕：點擊這裡 100% 可以解除瀏覽器聲音封鎖 -->
-        <button id="unlock-audio-btn" style="background-color: #00CC66; color: white; border: none; padding: 10px 20px; font-size: 16px; border-radius: 8px; cursor: pointer; margin-bottom: 10px; font-weight: bold; width: 100%;">
-            🔊 點擊此處：開啟並解鎖機器人音效喇叭 (測試前必點)
+        <button id="unlock-audio-btn" style="background-color: #00CC66; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 8px; cursor: pointer; margin-bottom: 10px; font-weight: bold; width: 100%; transition: 0.3s;">
+            🔊 第一步：點擊此處激活音效喇叭 (測試前必點)
         </button>
 
         <model-viewer 
@@ -66,9 +65,10 @@ if os.path.exists(model_filename):
             camera-controls 
             autoplay
             loop
-            time-scale="0.01"
             style="width: 100%; height: 450px;">
         </model-viewer>
+        
+        <p id="status-debug" style="color: #AAAAAA; font-size: 14px; margin-top: 10px; font-family: monospace;">系統狀態: 等待喇叭解鎖...</p>
     </div>
 
     <script type="module">
@@ -77,6 +77,7 @@ if os.path.exists(model_filename):
 
         const modelViewer = document.querySelector("#live-robot");
         const unlockBtn = document.querySelector("#unlock-audio-btn");
+        const statusDebug = document.querySelector("#status-debug");
         
         const imgNormalUrl = "data:image/png;base64,{b64_normal}";
         const imgTalkingUrl = "data:image/png;base64,{b64_talking}";
@@ -86,15 +87,23 @@ if os.path.exists(model_filename):
         let textureTalkingObj = null;
 
         let mouthTimer = null; 
-        let currentAudio = null;
+        // 🌟 關鍵改動：全域維護同一個唯一音訊播放器
+        let globalAudio = new Audio(); 
         let isAudioUnlocked = false;
 
-        // 🛠️ 監聽解鎖按鈕
+        // 🛠️ 按鈕點擊：由使用者主動觸發，這時瀏覽器會 100% 允許音訊播放
         unlockBtn.addEventListener("click", () => {{
-            isAudioUnlocked = true;
-            unlockBtn.style.backgroundColor = "#555555";
-            unlockBtn.innerText = "🟢 喇叭已解鎖！請去 Firebase 更改欄位測試";
-            console.log("喇叭播放權限已由使用者點擊按鈕成功解鎖！");
+            // 給予一個乾淨空音訊做為激活媒介
+            globalAudio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YQAAAAA=";
+            globalAudio.play().then(() => {{
+                isAudioUnlocked = true;
+                unlockBtn.style.backgroundColor = "#555555";
+                unlockBtn.innerText = "🟢 喇叭已成功解鎖！請去 Firebase 更改欄位測試";
+                statusDebug.innerText = "系統狀態: 喇叭已解鎖，正在監聽 Firebase...";
+                console.log("瀏覽器音訊通道已由使用者成功解鎖！");
+            }}).catch(err => {{
+                statusDebug.innerText = "❌ 喇叭解鎖失敗: " + err.message;
+            }});
         }});
 
         modelViewer.addEventListener("load", async () => {{
@@ -148,18 +157,23 @@ if os.path.exists(model_filename):
                 onValue(voiceRef, (snapshot) => {{
                     let incomingAudioData = snapshot.val();
                     if (incomingAudioData) {{
-                        // 容錯處理：移除可能的頭尾隱號與空白字元
                         incomingAudioData = incomingAudioData.trim().replace(/^"|"$/g, '');
 
                         if (isFirstLoad) {{
                             isFirstLoad = false;
+                            statusDebug.innerText = "系統狀態: 初始資料已略過，等待下一波更新...";
                             return;
                         }}
                         
                         if (incomingAudioData.startsWith("data:audio")) {{
+                            if (!isAudioUnlocked) {{
+                                statusDebug.innerText = "⚠️ 收到音訊但被阻擋！請先點擊上方綠色按鈕解鎖喇叭！";
+                                return;
+                            }}
                             playIncomingAudio(incomingAudioData);
                         }} else {{
-                            console.log("偵測到非音訊開頭資料，略過不播放。收到的資料開頭為:", incomingAudioData.substring(0, 20));
+                            statusDebug.innerText = "⚠️ 收到非音訊字串（例如: " + incomingAudioData.substring(0, 10) + "），略過不播放。";
+                            console.log("偵測到非音訊開頭資料，略過不播放。");
                         }}
                     }}
                 }});
@@ -168,58 +182,68 @@ if os.path.exists(model_filename):
 
         function playIncomingAudio(audioUrlStr) {{
             try {{
-                if (currentAudio) {{
-                    currentAudio.pause();
-                    currentAudio = null;
-                }}
+                // 停止上一次的所有嘴型計時器
                 if (mouthTimer) {{
                     clearInterval(mouthTimer);
                     mouthTimer = null;
                 }}
 
-                currentAudio = new Audio(audioUrlStr);
+                // 🌟 關鍵改動：直接對已解鎖的 globalAudio 變更音訊來源
+                globalAudio.pause();
+                globalAudio.src = audioUrlStr;
 
-                currentAudio.addEventListener("play", () => {{
+                // 綁定動嘴事件
+                let hasStartedMouth = false;
+                
+                globalAudio.onplay = () => {{
+                    statusDebug.innerText = "🎵 語音同步播放中...";
                     let isTalkFace = true;
                     safeApplyTexture(textureTalkingObj);
                     
-                    mouthTimer = setInterval(() => {{
-                        if (isTalkFace) {{
-                            safeApplyTexture(textureNormalObj);
-                        }} else {{
-                            safeApplyTexture(textureTalkingObj);
-                        }}
-                        isTalkFace = !isTalkFace;
-                    }}, 140);
-                }});
+                    if(!hasStartedMouth) {{
+                        hasStartedMouth = true;
+                        mouthTimer = setInterval(() => {{
+                            if (globalAudio.paused || globalAudio.ended) {{
+                                clearInterval(mouthTimer);
+                                mouthTimer = null;
+                                safeApplyTexture(textureNormalObj);
+                            }} else {{
+                                isTalkFace = !isTalkFace;
+                                safeApplyTexture(isTalkFace ? textureTalkingObj : textureNormalObj);
+                            }}
+                        }}, 140);
+                    }}
+                }};
 
-                currentAudio.addEventListener("ended", () => {{
+                globalAudio.onended = () => {{
                     if (mouthTimer) {{
                         clearInterval(mouthTimer);
                         mouthTimer = null;
                     }}
                     safeApplyTexture(textureNormalObj);
-                }});
+                    statusDebug.innerText = "🟢 播放完畢，等待下一波語音...";
+                }};
 
-                currentAudio.addEventListener("error", (e) => {{
+                globalAudio.onerror = (e) => {{
                     if (mouthTimer) {{
                         clearInterval(mouthTimer);
                         mouthTimer = null;
                     }}
                     safeApplyTexture(textureNormalObj);
-                    console.error("音訊解碼播放失敗，可能 Base64 字串不完整。");
+                    statusDebug.innerText = "❌ 音訊解碼失敗，請確認 Python 端寫入的 Base64 格式是否完整。";
+                }};
+
+                // 執行播放
+                globalAudio.play().catch(err => {{
+                    statusDebug.innerText = "❌ 播放失敗: " + err.message;
                 }});
 
-                currentAudio.play().catch(err => {{
-                    console.error("播放被瀏覽器阻擋，請確保有點擊上方的綠色解鎖按鈕！", err);
-                }});
-
-            }} catch (err) {{ console.error("初始化音訊物件失敗:", err); }}
+            }} catch (err) {{ console.error("處理音訊播放失敗:", err); }}
         }}
     </script>
     """
     
-    st.components.v1.html(html_code, height=550)
+    st.components.v1.html(html_code, height=580)
     st.success("📡 安全版即時語音連動看板已完全就緒！")
 
 else:
