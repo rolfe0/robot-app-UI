@@ -32,19 +32,147 @@ model_filename = "robot.glb"
 texture_normal = "idle.png"
 texture_talking = "talk.png"
 
-# 2. 檢查並準備貼圖
-b64_normal = ""
-b64_talking = ""
+# 2. 健壯的檔案讀取機制
+def get_file_b64(filepath):
+    if os.path.exists(filepath):
+        with open(filepath, "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    return None
 
-if os.path.exists(texture_normal):
-    with open(texture_normal, "rb") as f:
-        b64_normal = base64.b64encode(f.read()).decode()
-if os.path.exists(texture_talking):
-    with open(texture_talking, "rb") as f:
-        b64_talking = base64.b64encode(f.read()).decode()
+b64_normal = get_file_b64(texture_normal) or ""
+b64_talking = get_file_b64(texture_talking) or ""
+b64_model = get_file_b64(model_filename)
 
-# 3. 檢查 3D 檔案是否存在並讀取
-if os.path.exists(model_filename):
-    with open(model_filename, "rb") as f:
-        bytes_data = f.read()
-    b64_model = base64.b64
+if not b64_model:
+    st.error(f"❌ 找不到模型檔案：{model_filename}。請檢查檔案是否已上傳到 GitHub 對應目錄。")
+    st.stop() # 停止執行，避免後續報錯
+
+# 3. 採用純字串定義 HTML
+raw_html = """
+<script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
+
+<div style="display: flex; flex-direction: column; align-items: center; background-color: #1E1E24; border-radius: 15px; padding: 15px;">
+    <button id="unlock-audio-btn" style="background-color: #00CC66; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 8px; cursor: pointer; margin-bottom: 10px; font-weight: bold; width: 100%;">
+        🔊 系統啟動步驟：請先點擊此處解鎖喇叭
+    </button>
+
+    <model-viewer 
+        id="live-robot"
+        src="data:application/octet-stream;base64,__B64_MODEL__" 
+        alt="3D 機器人模型" 
+        camera-controls 
+        autoplay
+        loop
+        style="width: 100%; height: 420px;">
+    </model-viewer>
+    
+    <div style="background-color: #000000; width: 100%; padding: 10px; border-radius: 8px; margin-top: 10px; border: 1px solid #444;">
+        <p id="status-debug" style="color: #00FF00; font-size: 13px; font-family: monospace; margin: 0;">系統狀態: 等待點擊綠色按鈕解鎖音訊...</p>
+        <p id="data-debug" style="color: #FFCC00; font-size: 12px; font-family: monospace; margin: 5px 0 0 0; word-break: break-all;">Firebase 監聽狀態: 等待連線中...</p>
+    </div>
+</div>
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+
+    const modelViewer = document.querySelector("#live-robot");
+    const unlockBtn = document.querySelector("#unlock-audio-btn");
+    const statusDebug = document.querySelector("#status-debug");
+    const dataDebug = document.querySelector("#data-debug");
+    
+    const imgNormalUrl = "data:image/png;base64,__B64_NORMAL__";
+    const imgTalkingUrl = "data:image/png;base64,__B64_TALKING__";
+    
+    let isFirebaseInitialized = false;
+    let textureNormalObj = null;
+    let textureTalkingObj = null;
+    let currentAudio = null;
+    let isAudioUnlocked = false;
+    let lastPlayedAudioStr = ""; 
+
+    unlockBtn.addEventListener("click", () => {
+        isAudioUnlocked = true;
+        unlockBtn.style.backgroundColor = "#555555";
+        unlockBtn.innerText = "🟢 喇叭已解鎖！等待指令...";
+        statusDebug.innerText = "系統狀態: 喇叭已解鎖，即時監聽 Firebase 中...";
+        let dummy = new Audio("data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YQAAAAA=");
+        dummy.play().catch(e => {});
+    });
+
+    modelViewer.addEventListener("load", async () => {
+        try {
+            const anims = modelViewer.availableAnimations;
+            let targetAnim = anims.find(name => name.toLowerCase().includes("mixamo")) || anims[0];
+            if (targetAnim) {
+                modelViewer.animationName = targetAnim;
+                modelViewer.play();
+            }
+            textureNormalObj = await modelViewer.createTexture(imgNormalUrl);
+            textureTalkingObj = await modelViewer.createTexture(imgTalkingUrl);
+            safeApplyTexture(textureNormalObj);
+        } catch (e) { }
+        
+        if (!isFirebaseInitialized) {
+            startFirebaseListener();
+            isFirebaseInitialized = true;
+        }
+    });
+
+    function safeApplyTexture(targetTexture) {
+        if (!targetTexture || !modelViewer.model) return;
+        modelViewer.model.materials.forEach(mat => {
+            if (mat.pbrMetallicRoughness && mat.pbrMetallicRoughness.baseColorTexture) {
+                mat.pbrMetallicRoughness.baseColorTexture.setTexture(targetTexture);
+            }
+        });
+    }
+
+    function startFirebaseListener() {
+        const firebaseConfig = __FB_CONFIG_JSON__;
+        const app = initializeApp(firebaseConfig);
+        const database = getDatabase(app);
+        const voiceRef = ref(database, 'test');
+        let isFirstLoad = true;
+
+        onValue(voiceRef, (snapshot) => {
+            let rawVal = snapshot.val();
+            if (!rawVal) return;
+            let incomingAudioData = rawVal.toString().trim().replace(/^['"]|['"]$/g, '');
+            
+            if (isFirstLoad) { isFirstLoad = false; lastPlayedAudioStr = incomingAudioData; return; }
+            
+            if (incomingAudioData.length > 100 && isAudioUnlocked) {
+                if (!incomingAudioData.startsWith("data:")) incomingAudioData = "data:audio/wav;base64," + incomingAudioData;
+                if (incomingAudioData !== lastPlayedAudioStr) {
+                    lastPlayedAudioStr = incomingAudioData;
+                    playIncomingAudio(incomingAudioData);
+                }
+            }
+        });
+    }
+
+    function playIncomingAudio(audioUrlStr) {
+        if (currentAudio) currentAudio.pause();
+        currentAudio = new Audio(audioUrlStr);
+        currentAudio.addEventListener("play", () => {
+            statusDebug.innerText = "🎵 說話中 (張嘴)...";
+            safeApplyTexture(textureTalkingObj);
+        });
+        currentAudio.addEventListener("ended", () => {
+            statusDebug.innerText = "🟢 語音結束 (閉嘴)";
+            safeApplyTexture(textureNormalObj);
+        });
+        currentAudio.play().catch(err => { statusDebug.innerText = "❌ 播放失敗"; });
+    }
+</script>
+"""
+
+# 4. 安全替換標籤
+html_code = raw_html.replace("__B64_MODEL__", b64_model)\
+                    .replace("__B64_NORMAL__", b64_normal)\
+                    .replace("__B64_TALKING__", b64_talking)\
+                    .replace("__FB_CONFIG_JSON__", fb_config_json)
+
+st.components.v1.html(html_code, height=680)
+st.success("📡 系統已成功載入並監聽 Firebase！")
