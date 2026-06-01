@@ -5,8 +5,8 @@ import json
 
 # 1. 設定網頁標題與外觀
 st.set_page_config(page_title="🤖 雲端語音接收看板", layout="centered")
-st.title("🤖 雲端語音同步面板 (安全播放優化版)")
-st.write("目前狀態：🟢 遠端音訊動態接收核心已就緒！等待外部資料庫將語音 Base64 寫入 Firebase test 欄位...")
+st.title("🤖 雲端語音同步面板 (遠端音訊串流版)")
+st.write("目前狀態：🟢 連線機制已修復！網頁載入後，請在網頁任意空白處「點擊滑鼠一下」以啟用聲音。")
 
 # --- 讀取 Firebase 秘密金鑰 ---
 firebase_secret_str = st.secrets.get("FIREBASE_KEY")
@@ -53,10 +53,10 @@ if os.path.exists(model_filename):
     html_code = f"""
     <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
     
-    <div style="display: flex; flex-direction: column; align-items: center; background-color: #1E1E24; border-radius: 15px; padding: 15px;">
-        <button id="unlock-audio-btn" style="background-color: #00CC66; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 8px; cursor: pointer; margin-bottom: 10px; font-weight: bold; width: 100%; transition: 0.3s;">
-            🔊 第一步：點擊此處激活音效喇叭 (測試前必點)
-        </button>
+    <div id="click-zone" style="display: flex; flex-direction: column; align-items: center; background-color: #1E1E24; border-radius: 15px; padding: 15px; cursor: pointer;">
+        <p id="unlock-tip" style="color: #00CC66; font-size: 16px; margin-bottom: 10px; font-weight: bold; text-align: center;">
+            ⚠️ 【測試前提示】請先在下方機器人區域「點擊滑鼠任意處」啟用音效！
+        </p>
 
         <model-viewer 
             id="live-robot"
@@ -68,7 +68,7 @@ if os.path.exists(model_filename):
             style="width: 100%; height: 450px;">
         </model-viewer>
         
-        <p id="status-debug" style="color: #AAAAAA; font-size: 14px; margin-top: 10px; font-family: monospace;">系統狀態: 等待喇叭解鎖...</p>
+        <p id="status-debug" style="color: #AAAAAA; font-size: 14px; margin-top: 10px; font-family: monospace; text-align: center;">系統狀態: 等待點擊解鎖音訊...</p>
     </div>
 
     <script type="module">
@@ -76,8 +76,9 @@ if os.path.exists(model_filename):
         import {{ getDatabase, ref, onValue }} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
         const modelViewer = document.querySelector("#live-robot");
-        const unlockBtn = document.querySelector("#unlock-audio-btn");
+        const clickZone = document.querySelector("#click-zone");
         const statusDebug = document.querySelector("#status-debug");
+        const unlockTip = document.querySelector("#unlock-tip");
         
         const imgNormalUrl = "data:image/png;base64,{b64_normal}";
         const imgTalkingUrl = "data:image/png;base64,{b64_talking}";
@@ -87,20 +88,20 @@ if os.path.exists(model_filename):
         let textureTalkingObj = null;
 
         let mouthTimer = null; 
-        // 🌟 關鍵改動：全域維護同一個唯一音訊播放器
         let globalAudio = new Audio(); 
         let isAudioUnlocked = false;
 
-        // 🛠️ 按鈕點擊：由使用者主動觸發，這時瀏覽器會 100% 允許音訊播放
-        unlockBtn.addEventListener("click", () => {{
-            // 給予一個乾淨空音訊做為激活媒介
+        // 🛠️ 全螢幕/區域點擊解鎖：使用者只要碰一下網頁，立刻解鎖喇叭
+        clickZone.addEventListener("click", () => {{
+            if (isAudioUnlocked) return;
+            
+            // 播放極短的空白音訊來激活
             globalAudio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YQAAAAA=";
             globalAudio.play().then(() => {{
                 isAudioUnlocked = true;
-                unlockBtn.style.backgroundColor = "#555555";
-                unlockBtn.innerText = "🟢 喇叭已成功解鎖！請去 Firebase 更改欄位測試";
-                statusDebug.innerText = "系統狀態: 喇叭已解鎖，正在監聽 Firebase...";
-                console.log("瀏覽器音訊通道已由使用者成功解鎖！");
+                unlockTip.innerHTML = "🟢 喇叭通道已開啟！請去 Firebase 更改資料庫進行測試";
+                unlockTip.style.color = "#888888";
+                statusDebug.innerText = "系統狀態: 喇叭已解鎖，正在即時監聽 Firebase...";
             }}).catch(err => {{
                 statusDebug.innerText = "❌ 喇叭解鎖失敗: " + err.message;
             }});
@@ -113,138 +114,4 @@ if os.path.exists(model_filename):
                                  anims.find(name => name.toLowerCase().includes("armature.001")) ||
                                  anims[0];
                 if (targetAnim) {{
-                    modelViewer.animationName = targetAnim;
-                    setTimeout(() => {{ modelViewer.play(); }}, 100);
-                }}
-            }} catch (e) {{ console.log("動畫延遲"); }}
-
-            try {{
-                if (modelViewer.model && modelViewer.model.materials.length > 0) {{
-                    textureNormalObj = await modelViewer.createTexture(imgNormalUrl);
-                    textureTalkingObj = await modelViewer.createTexture(imgTalkingUrl);
-                    safeApplyTexture(textureNormalObj); 
-                }}
-            }} catch (err) {{ console.log("材質初始化略過零件"); }}
-            
-            if (!isFirebaseInitialized) {{
-                startFirebaseListener();
-                isFirebaseInitialized = true;
-            }}
-        }});
-
-        function safeApplyTexture(targetTexture) {{
-            if (!targetTexture || !modelViewer.model || !modelViewer.model.materials) return;
-            modelViewer.model.materials.forEach(mat => {{
-                try {{
-                    if (mat && mat.pbrMetallicRoughness && mat.pbrMetallicRoughness.baseColorTexture) {{
-                        mat.pbrMetallicRoughness.baseColorTexture.setTexture(targetTexture);
-                    }}
-                }} catch(e) {{ }}
-            }});
-        }}
-
-        function startFirebaseListener() {{
-            const firebaseConfig = {fb_config_json};
-            if (!firebaseConfig.databaseURL) return;
-
-            try {{
-                const app = initializeApp(firebaseConfig);
-                const database = getDatabase(app);
-                const voiceRef = ref(database, 'test');
-
-                let isFirstLoad = true;
-
-                onValue(voiceRef, (snapshot) => {{
-                    let incomingAudioData = snapshot.val();
-                    if (incomingAudioData) {{
-                        incomingAudioData = incomingAudioData.trim().replace(/^"|"$/g, '');
-
-                        if (isFirstLoad) {{
-                            isFirstLoad = false;
-                            statusDebug.innerText = "系統狀態: 初始資料已略過，等待下一波更新...";
-                            return;
-                        }}
-                        
-                        if (incomingAudioData.startsWith("data:audio")) {{
-                            if (!isAudioUnlocked) {{
-                                statusDebug.innerText = "⚠️ 收到音訊但被阻擋！請先點擊上方綠色按鈕解鎖喇叭！";
-                                return;
-                            }}
-                            playIncomingAudio(incomingAudioData);
-                        }} else {{
-                            statusDebug.innerText = "⚠️ 收到非音訊字串（例如: " + incomingAudioData.substring(0, 10) + "），略過不播放。";
-                            console.log("偵測到非音訊開頭資料，略過不播放。");
-                        }}
-                    }}
-                }});
-            }} catch(err) {{ console.error("Firebase 監聽啟動錯誤:", err); }}
-        }}
-
-        function playIncomingAudio(audioUrlStr) {{
-            try {{
-                // 停止上一次的所有嘴型計時器
-                if (mouthTimer) {{
-                    clearInterval(mouthTimer);
-                    mouthTimer = null;
-                }}
-
-                // 🌟 關鍵改動：直接對已解鎖的 globalAudio 變更音訊來源
-                globalAudio.pause();
-                globalAudio.src = audioUrlStr;
-
-                // 綁定動嘴事件
-                let hasStartedMouth = false;
-                
-                globalAudio.onplay = () => {{
-                    statusDebug.innerText = "🎵 語音同步播放中...";
-                    let isTalkFace = true;
-                    safeApplyTexture(textureTalkingObj);
-                    
-                    if(!hasStartedMouth) {{
-                        hasStartedMouth = true;
-                        mouthTimer = setInterval(() => {{
-                            if (globalAudio.paused || globalAudio.ended) {{
-                                clearInterval(mouthTimer);
-                                mouthTimer = null;
-                                safeApplyTexture(textureNormalObj);
-                            }} else {{
-                                isTalkFace = !isTalkFace;
-                                safeApplyTexture(isTalkFace ? textureTalkingObj : textureNormalObj);
-                            }}
-                        }}, 140);
-                    }}
-                }};
-
-                globalAudio.onended = () => {{
-                    if (mouthTimer) {{
-                        clearInterval(mouthTimer);
-                        mouthTimer = null;
-                    }}
-                    safeApplyTexture(textureNormalObj);
-                    statusDebug.innerText = "🟢 播放完畢，等待下一波語音...";
-                }};
-
-                globalAudio.onerror = (e) => {{
-                    if (mouthTimer) {{
-                        clearInterval(mouthTimer);
-                        mouthTimer = null;
-                    }}
-                    safeApplyTexture(textureNormalObj);
-                    statusDebug.innerText = "❌ 音訊解碼失敗，請確認 Python 端寫入的 Base64 格式是否完整。";
-                }};
-
-                // 執行播放
-                globalAudio.play().catch(err => {{
-                    statusDebug.innerText = "❌ 播放失敗: " + err.message;
-                }});
-
-            }} catch (err) {{ console.error("處理音訊播放失敗:", err); }}
-        }}
-    </script>
-    """
-    
-    st.components.v1.html(html_code, height=580)
-    st.success("📡 安全版即時語音連動看板已完全就緒！")
-
-else:
-    st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
+                    modelViewer.animationName = targetAnim
