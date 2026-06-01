@@ -94,4 +94,191 @@ if os.path.exists(model_filename):
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
     import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
-    const model
+    const modelIdle = document.querySelector("#model-idle");
+    const modelTalk = document.querySelector("#model-talk");
+    const unlockBtn = document.querySelector("#unlock-audio-btn");
+    const statusDebug = document.querySelector("#status-debug");
+    const dataDebug = document.querySelector("#data-debug");
+    
+    const imgNormalUrl = "data:image/png;base64,__B64_NORMAL__";
+    const imgTalkingUrl = "data:image/png;base64,__B64_TALKING__";
+    
+    let isFirebaseInitialized = false;
+    let currentAudio = null;
+    let isAudioUnlocked = false;
+    let lastPlayedAudioStr = ""; 
+    let audioCtx = null;
+    let analyser = null;
+    let dataArray = null;
+    let animationFrameId = null;
+
+    // 視角鏡頭完全同步
+    modelIdle.addEventListener("camera-change", () => {
+        modelTalk.cameraOrbit = modelIdle.cameraOrbit;
+        modelTalk.cameraTarget = modelIdle.cameraTarget;
+        modelTalk.fieldOfView = modelIdle.fieldOfView;
+    });
+
+    unlockBtn.addEventListener("click", () => {
+        isAudioUnlocked = true;
+        unlockBtn.style.backgroundColor = "#555555";
+        unlockBtn.innerText = "🟢 AI 雙模型同步監聽中...";
+        statusDebug.innerText = "系統狀態: 喇叭已解鎖，雙模型 CSS 混合核心已啟動。";
+        
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        let dummy = new Audio("data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YQAAAAA=");
+        let source = audioCtx.createMediaElementSource(dummy);
+        source.connect(audioCtx.destination);
+        dummy.play().catch(e => {});
+    });
+
+    modelIdle.addEventListener("load", async () => {
+        statusDebug.innerText = "正在設定閉嘴材質...";
+        setupAnimation(modelIdle);
+        try {
+            if (modelIdle.model && modelIdle.model.materials.length > 0) {
+                const tex = await modelIdle.createTexture(imgNormalUrl);
+                modelIdle.model.materials.forEach(m => {
+                    if(m && m.pbrMetallicRoughness && m.pbrMetallicRoughness.baseColorTexture) {
+                        m.pbrMetallicRoughness.baseColorTexture.setTexture(tex);
+                    }
+                });
+            }
+        } catch (e) { console.error(e); }
+    });
+
+    modelTalk.addEventListener("load", async () => {
+        statusDebug.innerText = "正在設定開口材質...全部載入完成！";
+        setupAnimation(modelTalk);
+        try {
+            if (modelTalk.model && modelTalk.model.materials.length > 0) {
+                const tex = await modelTalk.createTexture(imgTalkingUrl);
+                modelTalk.model.materials.forEach(m => {
+                    if(m && m.pbrMetallicRoughness && m.pbrMetallicRoughness.baseColorTexture) {
+                        m.pbrMetallicRoughness.baseColorTexture.setTexture(tex);
+                    }
+                });
+            }
+        } catch (e) { console.error(e); }
+        
+        if (!isFirebaseInitialized) {
+            startFirebaseListener();
+            isFirebaseInitialized = true;
+        }
+    });
+
+    function setupAnimation(viewer) {
+        try {
+            const anims = viewer.availableAnimations;
+            let targetAnim = anims.find(name => name.toLowerCase().includes("mixamo")) || 
+                             anims.find(name => name.toLowerCase().includes("armature")) || 
+                             anims[0];
+            if (targetAnim) {
+                viewer.animationName = targetAnim;
+                viewer.play();
+            }
+        } catch (e) {}
+    }
+
+    function startFirebaseListener() {
+        const firebaseConfig = __FB_CONFIG_JSON__;
+        if (!firebaseConfig.databaseURL) {
+            statusDebug.innerText = "❌ 錯誤: 找不到 Firebase 配置！";
+            return;
+        }
+        try {
+            const app = initializeApp(firebaseConfig);
+            const database = getDatabase(app);
+            const voiceRef = ref(database, 'test');
+            let isFirstLoad = true;
+
+            onValue(voiceRef, (snapshot) => {
+                let rawVal = snapshot.val();
+                if (!rawVal) return;
+                let incomingAudioData = rawVal.toString().trim().replace(/^['"]|['"]$/g, '');
+                dataDebug.innerText = "最新收到資料長度: " + incomingAudioData.length;
+                
+                if (isFirstLoad) {
+                    isFirstLoad = false;
+                    lastPlayedAudioStr = incomingAudioData;
+                    return;
+                }
+                if (incomingAudioData.length > 100) {
+                    if (!isAudioUnlocked) {
+                        statusDebug.innerText = "⚠️ 偵測到語音，請先點選按鈕解鎖喇叭！";
+                        return;
+                    }
+                    if (!incomingAudioData.startsWith("data:")) {
+                        incomingAudioData = "data:audio/wav;base64," + incomingAudioData;
+                    }
+                    if (currentAudio && !currentAudio.paused && !currentAudio.ended && incomingAudioData === lastPlayedAudioStr) return;
+                    lastPlayedAudioStr = incomingAudioData;
+                    playIncomingAudio(incomingAudioData);
+                }
+            });
+        } catch(err) { statusDebug.innerText = "❌ Firebase 連線失敗: " + err.message; }
+    }
+
+    function playIncomingAudio(audioUrlStr) {
+        try {
+            if (currentAudio) { currentAudio.pause(); }
+            if (animationFrameId) { cancelAnimationFrame(animationFrameId); }
+
+            currentAudio = new Audio(audioUrlStr);
+            currentAudio.crossOrigin = "anonymous";
+
+            if (audioCtx) {
+                if (audioCtx.state === 'suspended') { audioCtx.resume(); }
+                analyser = audioCtx.createAnalyser();
+                analyser.fftSize = 64; 
+                const source = audioCtx.createMediaElementSource(currentAudio);
+                source.connect(analyser);
+                analyser.connect(audioCtx.destination);
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+            }
+
+            currentAudio.addEventListener("play", () => {
+                statusDebug.innerText = "🎵 AI 語音分析中，機器人動畫與口型完美同步中...";
+                function loop() {
+                    if (!currentAudio || currentAudio.paused || currentAudio.ended) {
+                        modelTalk.style.opacity = "0";
+                        return;
+                    }
+                    animationFrameId = requestAnimationFrame(loop);
+                    if (analyser && dataArray) {
+                        analyser.getByteFrequencyData(dataArray);
+                        let total = 0;
+                        for (let i = 0; i < dataArray.length; i++) { total += dataArray[i]; }
+                        let averageVolume = total / dataArray.length;
+                        
+                        if (averageVolume > 15) {
+                            modelTalk.style.opacity = "1";
+                        } else {
+                            modelTalk.style.opacity = "0";
+                        }
+                    }
+                }
+                loop();
+            });
+
+            currentAudio.addEventListener("ended", () => {
+                modelTalk.style.opacity = "0";
+                statusDebug.innerText = "🟢 語音播放完畢，持續保持待機搖擺。";
+            });
+
+            currentAudio.play().catch(err => { statusDebug.innerText = "❌ 播放失敗: " + err.message; });
+        } catch (err) { console.error(err); }
+    }
+</script>
+"""
+
+    # 5. 安全替換標籤與渲染 (高度 680 確保資訊完整不被切掉)
+    html_code = raw_html.replace("__B64_MODEL__", b64_model)\
+                        .replace("__B64_NORMAL__", b64_normal)\
+                        .replace("__B64_TALKING__", b64_talking)\
+                        .replace("__FB_CONFIG_JSON__", fb_config_json)
+    
+    st.components.v1.html(html_code, height=680)
+    st.success("📡 雙模型無干擾、永不卡死的動態看板已完美上線！")
+else:
+    st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
