@@ -23,7 +23,7 @@ if firebase_secret_str:
             "projectId": config_data.get("project_id"),
         })
     except Exception as e:
-        st.error(f"❌ 金鑰解析失敗，請檢查 Settings 裡的 Secrets。")
+        st.error("❌ 金鑰解析失敗，請檢查 Settings 裡的 Secrets。")
 else:
     st.warning("⚠️ 系統未偵測到環境變數中的 Firebase 金鑰。")
 
@@ -95,7 +95,7 @@ if os.path.exists(model_filename):
         let textureNormalObj = null;
         let textureTalkingObj = null;
         
-        // 🌟 新增狀態鎖：用來阻止 WebGL 重複綁定材質導致動畫卡死
+        // 狀態鎖：用來阻止 WebGL 重複綁定材質導致動畫卡死
         let currentActiveFace = ""; 
         
         // AI 聲音分析
@@ -107,4 +107,187 @@ if os.path.exists(model_filename):
         // 使用者點擊解鎖喇叭
         unlockBtn.addEventListener("click", () => {
             isAudioUnlocked = true;
-            unlockBtn.style.backgroundColor = "#555
+            unlockBtn.style.backgroundColor = "#555555";
+            unlockBtn.innerText = "🟢 AI 貼圖混色監聽中，等待音訊...";
+            statusDebug.innerText = "系統狀態: 喇叭已解鎖，待機動作與對口型同步運作中。";
+            
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            
+            let dummy = new Audio("data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YQAAAAA=");
+            let source = audioCtx.createMediaElementSource(dummy);
+            source.connect(audioCtx.destination);
+            dummy.play().catch(e => console.log("預激活"));
+        });
+
+        modelViewer.addEventListener("load", async () => {
+            statusDebug.innerText = "模型載入完成。正在加載 3D 材質動畫...";
+            
+            // 1. 確保基礎待機動畫（Idle）穩定啟動與循環
+            try {
+                const anims = modelViewer.availableAnimations;
+                let targetAnim = anims.find(name => name.toLowerCase().includes("mixamo.com.001")) ||
+                                 anims.find(name => name.toLowerCase().includes("armature.001")) ||
+                                 anims[0];
+                if (targetAnim) {
+                    modelViewer.animationName = targetAnim;
+                    modelViewer.play();
+                }
+            } catch (e) { console.error("播放待機動畫失敗:", e); }
+
+            // 2. 預先將兩張貼圖加載進顯存
+            try {
+                if (modelViewer.model && modelViewer.model.materials.length > 0) {
+                    textureNormalObj = await modelViewer.createTexture(imgNormalUrl);
+                    textureTalkingObj = await modelViewer.createTexture(imgTalkingUrl);
+                    applyTextureBlend(0); 
+                }
+            } catch (err) { console.error("貼圖加載出錯:", err); }
+
+            if (!isFirebaseInitialized) {
+                startFirebaseListener();
+                isFirebaseInitialized = true;
+            }
+        });
+
+        function startFirebaseListener() {
+            const firebaseConfig = __FB_CONFIG_JSON__;
+            if (!firebaseConfig.databaseURL) {
+                statusDebug.innerText = "❌ 錯誤: 找不到 Firebase 配置！";
+                return;
+            }
+
+            try {
+                const app = initializeApp(firebaseConfig);
+                const database = getDatabase(app);
+                const voiceRef = ref(database, 'test');
+
+                let isFirstLoad = true;
+
+                onValue(voiceRef, (snapshot) => {
+                    let rawVal = snapshot.val();
+                    if (!rawVal) return;
+
+                    let incomingAudioData = rawVal.toString().trim().replace(/^['"]|['"]$/g, '');
+                    dataDebug.innerText = "最新收到資料長度: " + incomingAudioData.length;
+
+                    if (isFirstLoad) {
+                        isFirstLoad = false;
+                        lastPlayedAudioStr = incomingAudioData;
+                        return;
+                    }
+                    
+                    if (incomingAudioData.length > 100) {
+                        if (!isAudioUnlocked) {
+                            statusDebug.innerText = "⚠️ 偵測到語音，但請先點選上方按鈕解鎖喇叭！";
+                            return;
+                        }
+                        
+                        if (!incomingAudioData.startsWith("data:")) {
+                            incomingAudioData = "data:audio/wav;base64," + incomingAudioData;
+                        }
+                        
+                        if (currentAudio && !currentAudio.paused && !currentAudio.ended && incomingAudioData === lastPlayedAudioStr) {
+                            return;
+                        }
+                        
+                        lastPlayedAudioStr = incomingAudioData;
+                        playIncomingAudio(incomingAudioData);
+                    }
+                });
+            } catch(err) { statusDebug.innerText = "❌ Firebase 連線失敗: " + err.message; }
+        }
+
+        function playIncomingAudio(audioUrlStr) {
+            try {
+                if (currentAudio) { currentAudio.pause(); }
+                if (animationFrameId) { cancelAnimationFrame(animationFrameId); }
+
+                currentAudio = new Audio(audioUrlStr);
+                currentAudio.crossOrigin = "anonymous";
+
+                if (audioCtx) {
+                    if (audioCtx.state === 'suspended') { audioCtx.resume(); }
+                    
+                    analyser = audioCtx.createAnalyser();
+                    analyser.fftSize = 64; 
+                    
+                    const source = audioCtx.createMediaElementSource(currentAudio);
+                    source.connect(analyser);
+                    analyser.connect(audioCtx.destination);
+                    
+                    const bufferLength = analyser.frequencyBinCount;
+                    dataArray = new Uint8Array(bufferLength);
+                }
+
+                currentAudio.addEventListener("play", () => {
+                    statusDebug.innerText = "🎵 AI 語音震幅追蹤中，龍正常說話中...";
+                    
+                    function fadeTextureLoop() {
+                        if (!currentAudio || currentAudio.paused || currentAudio.ended) {
+                            applyTextureBlend(0); 
+                            return;
+                        }
+                        
+                        animationFrameId = requestAnimationFrame(fadeTextureLoop);
+                        
+                        if (analyser && dataArray) {
+                            analyser.getByteFrequencyData(dataArray);
+                            
+                            let total = 0;
+                            for (let i = 0; i < dataArray.length; i++) { total += dataArray[i]; }
+                            let volume = total / dataArray.length / 255; 
+                            
+                            let blendFactor = Math.min(volume * 1.8, 1); 
+                            applyTextureBlend(blendFactor);
+                        }
+                    }
+                    
+                    fadeTextureLoop();
+                });
+
+                currentAudio.addEventListener("ended", () => {
+                    applyTextureBlend(0);
+                    statusDebug.innerText = "🟢 語音播放完畢，回復待機搖擺動態。";
+                });
+
+                currentAudio.play().catch(err => {
+                    statusDebug.innerText = "❌ 播放失敗: " + err.message;
+                });
+
+            } catch (err) { console.error(err); }
+        }
+
+        function applyTextureBlend(factor) {
+            if (!modelViewer.model || !modelViewer.model.materials) return;
+            
+            let targetFace = (factor < 0.4) ? "NORMAL" : "TALK";
+            
+            if (currentActiveFace === targetFace) return;
+            currentActiveFace = targetFace;
+            
+            modelViewer.model.materials.forEach(mat => {
+                try {
+                    if (mat && mat.pbrMetallicRoughness && mat.pbrMetallicRoughness.baseColorTexture) {
+                        if (targetFace === "NORMAL") {
+                            mat.pbrMetallicRoughness.baseColorTexture.setTexture(textureNormalObj);
+                        } else {
+                            mat.pbrMetallicRoughness.baseColorTexture.setTexture(textureTalkingObj);
+                        }
+                    }
+                } catch(e) {}
+            });
+        }
+    </script>
+    """
+
+    # 5. 安全替換標籤與渲染
+    html_code = raw_html.replace("__B64_MODEL__", b64_model)\
+                        .replace("__B64_NORMAL__", b64_normal)\
+                        .replace("__B64_TALKING__", b64_talking)\
+                        .replace("__FB_CONFIG_JSON__", fb_config_json)
+    
+    st.components.v1.html(html_code, height=580)
+    st.success("📡 雙材質 AI 動態對口型看板已完美上線！")
+else:
+    st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
+    
