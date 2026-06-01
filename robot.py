@@ -4,9 +4,9 @@ import os
 import json
 
 # 1. 設定網頁標題與外觀
-st.set_page_config(page_title="🤖 AI 語音口型與動畫看板", layout="centered")
-st.title("🤖 AI 語音動態口型 (待機動畫+雙材質融合版)")
-st.write("目前狀態：🟢 連續監聽與動畫修復核心已就緒！已徹底根治待機動作卡死的 Bug。")
+st.set_page_config(page_title="🤖 AI 語音雙圖切換看板", layout="centered")
+st.title("🤖 AI 語音動態口型 (雙整體貼圖精準切換版)")
+st.write("目前狀態：🟢 雙圖精準切換引擎已啟動！當聲音響起時，會直接將模型材質替換成開口貼圖檔案。")
 
 # --- 讀取 Firebase 秘密金鑰 ---
 firebase_secret_str = st.secrets.get("FIREBASE_KEY")
@@ -27,10 +27,10 @@ if firebase_secret_str:
 else:
     st.warning("⚠️ 系統未偵測到環境變數中的 Firebase 金鑰。")
 
-# 檔案名稱定義
+# 檔案名稱定義（請確保專案目錄下有這兩個完整的貼圖檔案）
 model_filename = "robot.glb"
-texture_normal = "idle.png"
-texture_talking = "talk.png"
+texture_normal = "idle.png"    # 閉嘴的完整貼圖
+texture_talking = "talk.png"   # 開口的完整貼圖
 
 # 2. 檢查並讀取兩張整體貼圖
 b64_normal = ""
@@ -39,9 +39,14 @@ b64_talking = ""
 if os.path.exists(texture_normal):
     with open(texture_normal, "rb") as f:
         b64_normal = base64.b64encode(f.read()).decode()
+else:
+    st.error(f"❌ 找不到閉嘴貼圖：{texture_normal}")
+
 if os.path.exists(texture_talking):
     with open(texture_talking, "rb") as f:
         b64_talking = base64.b64encode(f.read()).decode()
+else:
+    st.error(f"❌ 找不到開口貼圖：{texture_talking}")
 
 # 3. 檢查 3D 檔案是否存在並讀取
 if os.path.exists(model_filename):
@@ -55,7 +60,7 @@ if os.path.exists(model_filename):
     
     <div style="display: flex; flex-direction: column; align-items: center; background-color: #1E1E24; border-radius: 15px; padding: 15px;">
         <button id="unlock-audio-btn" style="background-color: #00CC66; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 8px; cursor: pointer; margin-bottom: 10px; font-weight: bold; width: 100%;">
-            🔊 系統啟動步驟：請先點擊此處解鎖喇叭 (啟用待機動作與語音引擎)
+            🔊 系統啟動步驟：請先點擊此處解鎖喇叭 (啟用雙圖切換引擎)
         </button>
 
         <model-viewer 
@@ -95,7 +100,7 @@ if os.path.exists(model_filename):
         let textureNormalObj = null;
         let textureTalkingObj = null;
         
-        // 狀態鎖：用來阻止 WebGL 重複綁定材質導致動畫卡死
+        // 狀態鎖：用來記錄目前模型身上正在套用哪張貼圖
         let currentActiveFace = ""; 
         
         // AI 聲音分析
@@ -108,8 +113,8 @@ if os.path.exists(model_filename):
         unlockBtn.addEventListener("click", () => {
             isAudioUnlocked = true;
             unlockBtn.style.backgroundColor = "#555555";
-            unlockBtn.innerText = "🟢 AI 貼圖混色監聽中，等待音訊...";
-            statusDebug.innerText = "系統狀態: 喇叭已解鎖，待機動作與對口型同步運作中。";
+            unlockBtn.innerText = "🟢 AI 雙圖監聽引擎已啟動，等待音訊...";
+            statusDebug.innerText = "系統狀態: 喇叭已解鎖，正在接收語音並切換材質。";
             
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             
@@ -120,28 +125,28 @@ if os.path.exists(model_filename):
         });
 
         modelViewer.addEventListener("load", async () => {
-            statusDebug.innerText = "模型載入完成。正在加載 3D 材質動畫...";
+            statusDebug.innerText = "模型載入完成。正在快取雙貼圖檔案...";
             
-            // 1. 確保基礎待機動畫（Idle）穩定啟動與循環
+            // 1. 啟動並循環待機動畫
             try {
                 const anims = modelViewer.availableAnimations;
-                let targetAnim = anims.find(name => name.toLowerCase().includes("mixamo.com.001")) ||
-                                 anims.find(name => name.toLowerCase().includes("armature.001")) ||
-                                 anims[0];
+                let targetAnim = anims.find(name => name.toLowerCase().includes("mixamo")) || anims[0];
                 if (targetAnim) {
                     modelViewer.animationName = targetAnim;
                     modelViewer.play();
                 }
-            } catch (e) { console.error("播放待機動畫失敗:", e); }
+            } catch (e) { console.error("動畫啟動失敗:", e); }
 
-            // 2. 預先將兩張貼圖加載進顯存
+            // 2. 預先將兩張完整的獨立貼圖載入 WebGL 顯存
             try {
                 if (modelViewer.model && modelViewer.model.materials.length > 0) {
                     textureNormalObj = await modelViewer.createTexture(imgNormalUrl);
                     textureTalkingObj = await modelViewer.createTexture(imgTalkingUrl);
-                    applyTextureBlend(0); 
+                    
+                    // 初始狀態強制套用閉嘴貼圖 (idle.png)
+                    forceApplyTexture("NORMAL");
                 }
-            } catch (err) { console.error("貼圖加載出錯:", err); }
+            } catch (err) { console.error("貼圖快取出錯:", err); }
 
             if (!isFirebaseInitialized) {
                 startFirebaseListener();
@@ -174,120 +179,3 @@ if os.path.exists(model_filename):
                         isFirstLoad = false;
                         lastPlayedAudioStr = incomingAudioData;
                         return;
-                    }
-                    
-                    if (incomingAudioData.length > 100) {
-                        if (!isAudioUnlocked) {
-                            statusDebug.innerText = "⚠️ 偵測到語音，但請先點選上方按鈕解鎖喇叭！";
-                            return;
-                        }
-                        
-                        if (!incomingAudioData.startsWith("data:")) {
-                            incomingAudioData = "data:audio/wav;base64," + incomingAudioData;
-                        }
-                        
-                        if (currentAudio && !currentAudio.paused && !currentAudio.ended && incomingAudioData === lastPlayedAudioStr) {
-                            return;
-                        }
-                        
-                        lastPlayedAudioStr = incomingAudioData;
-                        playIncomingAudio(incomingAudioData);
-                    }
-                });
-            } catch(err) { statusDebug.innerText = "❌ Firebase 連線失敗: " + err.message; }
-        }
-
-        function playIncomingAudio(audioUrlStr) {
-            try {
-                if (currentAudio) { currentAudio.pause(); }
-                if (animationFrameId) { cancelAnimationFrame(animationFrameId); }
-
-                currentAudio = new Audio(audioUrlStr);
-                currentAudio.crossOrigin = "anonymous";
-
-                if (audioCtx) {
-                    if (audioCtx.state === 'suspended') { audioCtx.resume(); }
-                    
-                    analyser = audioCtx.createAnalyser();
-                    analyser.fftSize = 64; 
-                    
-                    const source = audioCtx.createMediaElementSource(currentAudio);
-                    source.connect(analyser);
-                    analyser.connect(audioCtx.destination);
-                    
-                    const bufferLength = analyser.frequencyBinCount;
-                    dataArray = new Uint8Array(bufferLength);
-                }
-
-                currentAudio.addEventListener("play", () => {
-                    statusDebug.innerText = "🎵 AI 語音震幅追蹤中，龍正常說話中...";
-                    
-                    function fadeTextureLoop() {
-                        if (!currentAudio || currentAudio.paused || currentAudio.ended) {
-                            applyTextureBlend(0); 
-                            return;
-                        }
-                        
-                        animationFrameId = requestAnimationFrame(fadeTextureLoop);
-                        
-                        if (analyser && dataArray) {
-                            analyser.getByteFrequencyData(dataArray);
-                            
-                            let total = 0;
-                            for (let i = 0; i < dataArray.length; i++) { total += dataArray[i]; }
-                            let volume = total / dataArray.length / 255; 
-                            
-                            let blendFactor = Math.min(volume * 1.8, 1); 
-                            applyTextureBlend(blendFactor);
-                        }
-                    }
-                    
-                    fadeTextureLoop();
-                });
-
-                currentAudio.addEventListener("ended", () => {
-                    applyTextureBlend(0);
-                    statusDebug.innerText = "🟢 語音播放完畢，回復待機搖擺動態。";
-                });
-
-                currentAudio.play().catch(err => {
-                    statusDebug.innerText = "❌ 播放失敗: " + err.message;
-                });
-
-            } catch (err) { console.error(err); }
-        }
-
-        function applyTextureBlend(factor) {
-            if (!modelViewer.model || !modelViewer.model.materials) return;
-            
-            let targetFace = (factor < 0.4) ? "NORMAL" : "TALK";
-            
-            if (currentActiveFace === targetFace) return;
-            currentActiveFace = targetFace;
-            
-            modelViewer.model.materials.forEach(mat => {
-                try {
-                    if (mat && mat.pbrMetallicRoughness && mat.pbrMetallicRoughness.baseColorTexture) {
-                        if (targetFace === "NORMAL") {
-                            mat.pbrMetallicRoughness.baseColorTexture.setTexture(textureNormalObj);
-                        } else {
-                            mat.pbrMetallicRoughness.baseColorTexture.setTexture(textureTalkingObj);
-                        }
-                    }
-                } catch(e) {}
-            });
-        }
-    </script>
-    """
-
-    # 5. 安全替換標籤與渲染
-    html_code = raw_html.replace("__B64_MODEL__", b64_model)\
-                        .replace("__B64_NORMAL__", b64_normal)\
-                        .replace("__B64_TALKING__", b64_talking)\
-                        .replace("__FB_CONFIG_JSON__", fb_config_json)
-    
-    st.components.v1.html(html_code, height=680)
-    st.success("📡 雙材質 AI 動態對口型看板已完美上線！")
-else:
-    st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
-    
