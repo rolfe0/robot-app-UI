@@ -5,8 +5,8 @@ import json
 
 # 1. 設定網頁標題與外觀
 st.set_page_config(page_title="🤖 雲端語音接收看板", layout="centered")
-st.title("🤖 雲端語音同步面板 (修正版)")
-st.write("目前狀態：🟢 已修正音訊播放問題")
+st.title("🤖 雲端語音同步面板 (說話不閃爍穩定版)")
+st.write("目前狀態：🟢 基於穩定版本修改，說話時固定顯示說話貼圖，不閃爍。")
 
 # --- 讀取 Firebase 秘密金鑰 ---
 firebase_secret_str = st.secrets.get("FIREBASE_KEY")
@@ -23,7 +23,7 @@ if firebase_secret_str:
             "projectId": config_data.get("project_id"),
         })
     except Exception as e:
-        st.error(f"❌ 金鑰解析失敗: {e}")
+        st.error(f"❌ 金鑰解析失敗，請檢查 Settings 裡的 Secrets。")
 else:
     st.warning("⚠️ 系統未偵測到環境變數中的 Firebase 金鑰。")
 
@@ -49,16 +49,13 @@ if os.path.exists(model_filename):
         bytes_data = f.read()
     b64_model = base64.b64encode(bytes_data).decode()
 
-    # 4. 修正後的 HTML
+    # 4. 採用純字串定義 HTML (基於工作版本，只修改貼圖行為)
     raw_html = """
     <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
     
     <div style="display: flex; flex-direction: column; align-items: center; background-color: #1E1E24; border-radius: 15px; padding: 15px;">
         <button id="unlock-audio-btn" style="background-color: #00CC66; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 8px; cursor: pointer; margin-bottom: 10px; font-weight: bold; width: 100%;">
-            🔊 點擊此處啟用語音系統 (必須點擊才能播放語音)
-        </button>
-        <button id="test-audio-btn" style="background-color: #FF8800; color: white; border: none; padding: 10px 20px; font-size: 14px; border-radius: 8px; cursor: pointer; margin-bottom: 10px; font-weight: bold; width: 100%;">
-            🎵 測試語音播放 (使用預設音效)
+            🔊 系統啟動步驟：請先點擊此處解鎖喇叭 (只需點一次，即可連續接收語音)
         </button>
 
         <model-viewer 
@@ -72,7 +69,7 @@ if os.path.exists(model_filename):
         </model-viewer>
         
         <div style="background-color: #000000; width: 100%; padding: 10px; border-radius: 8px; margin-top: 10px; border: 1px solid #444;">
-            <p id="status-debug" style="color: #00FF00; font-size: 13px; font-family: monospace; margin: 0;">系統狀態: 請點擊綠色按鈕啟用語音系統...</p>
+            <p id="status-debug" style="color: #00FF00; font-size: 13px; font-family: monospace; margin: 0;">系統狀態: 等待點擊綠色按鈕解鎖音訊...</p>
             <p id="data-debug" style="color: #FFCC00; font-size: 12px; font-family: monospace; margin: 5px 0 0 0; word-break: break-all;">Firebase 監聽狀態: 等待連線中...</p>
         </div>
     </div>
@@ -83,7 +80,6 @@ if os.path.exists(model_filename):
 
         const modelViewer = document.querySelector("#live-robot");
         const unlockBtn = document.querySelector("#unlock-audio-btn");
-        const testBtn = document.querySelector("#test-audio-btn");
         const statusDebug = document.querySelector("#status-debug");
         const dataDebug = document.querySelector("#data-debug");
         
@@ -95,67 +91,20 @@ if os.path.exists(model_filename):
         let textureTalkingObj = null;
 
         let currentAudio = null;
-        let isAudioUnlocked = false;  // 改用簡單的布林值
+        let isAudioUnlocked = false;
         
         // 用來記錄最後一次「真正播放」的音訊字串
         let lastPlayedAudioStr = ""; 
 
-        // 使用者點擊解鎖按鈕 - 簡化版本
-        unlockBtn.addEventListener("click", async () => {
+        // 使用者點擊解鎖喇叭通道
+        unlockBtn.addEventListener("click", () => {
             isAudioUnlocked = true;
             unlockBtn.style.backgroundColor = "#555555";
-            unlockBtn.innerText = "🟢 語音系統已啟用！等待 Firebase 語音資料... 🟢";
-            statusDebug.innerText = "系統狀態: 語音系統已啟用，即時監聽 Firebase 中...";
+            unlockBtn.innerText = "🟢 喇叭已解鎖！隨時等待外部資料庫傳入連續語音 🟢";
+            statusDebug.innerText = "系統狀態: 喇叭已解鎖，即時監聽 Firebase 中...";
             
-            // 嘗試播放一個極短暫的靜音來解鎖瀏覽器
-            try {
-                const silentAudio = new Audio("data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YQAAAAA=");
-                silentAudio.volume = 0;
-                await silentAudio.play();
-                console.log("音訊已解鎖");
-            } catch(e) {
-                console.log("解鎖警告:", e);
-                // 有些瀏覽器可能需要使用者實際點擊有聲音的按鈕
-                // 所以我們也嘗試建立一個 AudioContext
-                try {
-                    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                    await audioCtx.resume();
-                } catch(ctxErr) {
-                    console.log("AudioContext 錯誤:", ctxErr);
-                }
-            }
-        });
-        
-        // 測試按鈕 - 使用簡單的 WAV 檔案而不是 Web Audio API
-        testBtn.addEventListener("click", async () => {
-            if (!isAudioUnlocked) {
-                statusDebug.innerText = "⚠️ 請先點擊綠色「啟用語音系統」按鈕！";
-                return;
-            }
-            
-            // 使用一個確保可以播放的短 WAV 檔案
-            const testWavBase64 = "UklGRiQAAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YQAAAAA=";
-            const testAudio = new Audio("data:audio/wav;base64," + testWavBase64);
-            
-            testAudio.onplay = () => {
-                statusDebug.innerText = "🔊 測試音播放中！喇叭正常運作。";
-                setTimeout(() => {
-                    if (!currentAudio || currentAudio.paused) {
-                        statusDebug.innerText = "系統狀態: 語音系統已啟用，等待 Firebase 語音...";
-                    }
-                }, 500);
-            };
-            
-            testAudio.onerror = (e) => {
-                statusDebug.innerText = "❌ 測試失敗: 無法播放音訊";
-                console.error("測試音錯誤:", testAudio.error);
-            };
-            
-            try {
-                await testAudio.play();
-            } catch(e) {
-                statusDebug.innerText = "❌ 測試失敗: " + e.message;
-            }
+            let dummy = new Audio("data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YQAAAAA=");
+            dummy.play().catch(e => console.log("預激活"));
         });
 
         modelViewer.addEventListener("load", async () => {
@@ -176,9 +125,7 @@ if os.path.exists(model_filename):
                     textureTalkingObj = await modelViewer.createTexture(imgTalkingUrl);
                     safeApplyTexture(textureNormalObj); 
                 }
-            } catch (err) {
-                console.error("貼圖錯誤:", err);
-            }
+            } catch (err) {}
             
             if (!isFirebaseInitialized) {
                 startFirebaseListener();
@@ -195,13 +142,6 @@ if os.path.exists(model_filename):
                     }
                 } catch(e) { }
             });
-        }
-
-        // 驗證 Base64 是否為有效的 WAV 格式
-        function isValidWavBase64(base64Str) {
-            if (!base64Str) return false;
-            // 檢查開頭是否為有效的 WAV 標頭
-            return base64Str.startsWith('UklGR') || base64Str.startsWith('RIFF');
         }
 
         function startFirebaseListener() {
@@ -225,17 +165,12 @@ if os.path.exists(model_filename):
                         return;
                     }
 
-                    let incomingAudioData = rawVal.toString().trim();
-                    // 移除可能的引號
-                    incomingAudioData = incomingAudioData.replace(/^['"]|['"]$/g, '');
+                    // 強制轉字串並清洗
+                    let incomingAudioData = rawVal.toString().trim().replace(/^['"]|['"]$/g, '');
                     
-                    let dataLength = incomingAudioData.length;
-                    let displayPrefix = incomingAudioData.substring(0, 60);
-                    dataDebug.innerText = "📥 收到資料 | 長度: " + dataLength + " | 開頭: " + displayPrefix.substring(0, 30) + "...";
-                    
-                    console.log("Firebase 資料長度:", dataLength);
-                    console.log("Firebase 開頭:", incomingAudioData.substring(0, 20));
+                    dataDebug.innerText = "最新收到資料開頭: " + incomingAudioData.substring(0, 50) + "... (長度: " + incomingAudioData.length + ")";
 
+                    // 第一次載入如果是網頁開啟前的舊資料，更新狀態後略過不播
                     if (isFirstLoad) {
                         isFirstLoad = false;
                         lastPlayedAudioStr = incomingAudioData;
@@ -243,113 +178,65 @@ if os.path.exists(model_filename):
                         return;
                     }
                     
-                    // 檢查長度是否足夠（完整音訊應該 > 10000）
-                    if (dataLength < 1000) {
-                        statusDebug.innerText = "⚠️ 資料長度不足 (" + dataLength + ")，可能不是完整的音訊";
-                        return;
+                    if (incomingAudioData.length > 100) {
+                        if (!isAudioUnlocked) {
+                            statusDebug.innerText = "⚠️ 偵測到語音，但請先點選上方「綠色按鈕」解鎖喇叭！";
+                            return;
+                        }
+                        
+                        // 防呆補齊 Data URL 開頭
+                        if (!incomingAudioData.startsWith("data:")) {
+                            incomingAudioData = "data:audio/wav;base64," + incomingAudioData;
+                        }
+                        
+                        // 關鍵智慧判定邏輯
+                        if (currentAudio && !currentAudio.paused && !currentAudio.ended && incomingAudioData === lastPlayedAudioStr) {
+                            statusDebug.innerText = "🎵 收到重複語音訊號，保持目前音訊完整播放中...";
+                            return;
+                        }
+                        
+                        lastPlayedAudioStr = incomingAudioData;
+                        playIncomingAudio(incomingAudioData);
+                    } else {
+                        statusDebug.innerText = "⚠️ 收到非音訊格式（字串過短），已略過。";
                     }
-                    
-                    if (!isValidWavBase64(incomingAudioData)) {
-                        statusDebug.innerText = "⚠️ 格式錯誤: 開頭應為 UklGR，實際: " + incomingAudioData.substring(0, 10);
-                        return;
-                    }
-                    
-                    if (!isAudioUnlocked) {
-                        statusDebug.innerText = "⚠️ 偵測到語音，但請先點擊綠色按鈕解鎖喇叭！";
-                        return;
-                    }
-                    
-                    // 避免重複播放相同的語音
-                    if (currentAudio && !currentAudio.paused && !currentAudio.ended && incomingAudioData === lastPlayedAudioStr) {
-                        statusDebug.innerText = "🎵 收到重複語音訊號，保持目前音訊完整播放中...";
-                        return;
-                    }
-                    
-                    lastPlayedAudioStr = incomingAudioData;
-                    playIncomingAudio(incomingAudioData);
                 });
-            } catch(err) { 
-                statusDebug.innerText = "❌ Firebase 連線失敗: " + err.message;
-                console.error("Firebase 錯誤:", err);
-            }
+            } catch(err) { statusDebug.innerText = "❌ Firebase 連線失敗: " + err.message; }
         }
 
-        async function playIncomingAudio(base64Data) {
+        function playIncomingAudio(audioUrlStr) {
             try {
-                // 中斷前一條音訊
+                // 中斷前一條
                 if (currentAudio) {
                     currentAudio.pause();
                     currentAudio = null;
                 }
 
-                // 建立完整的 Data URL
-                let audioUrl = "data:audio/wav;base64," + base64Data;
-                
-                statusDebug.innerText = "🎵 正在載入音訊...";
-                
-                currentAudio = new Audio(audioUrl);
+                currentAudio = new Audio(audioUrlStr);
 
-                // 使用 Promise 來處理播放
-                const playPromise = currentAudio.play();
-                
-                if (playPromise !== undefined) {
-                    playPromise.then(() => {
-                        statusDebug.innerText = "🎵 語音播放中，機器人說話中...";
-                        safeApplyTexture(textureTalkingObj);
-                    }).catch(err => {
-                        console.error("播放錯誤:", err);
-                        safeApplyTexture(textureNormalObj);
-                        if (err.name === 'NotAllowedError') {
-                            statusDebug.innerText = "❌ 播放失敗: 請先點擊綠色解鎖按鈕";
-                        } else if (err.name === 'NotSupportedError') {
-                            statusDebug.innerText = "❌ 播放失敗: 瀏覽器不支援此音訊格式";
-                        } else {
-                            statusDebug.innerText = "❌ 播放失敗: " + err.message;
-                        }
-                        currentAudio = null;
-                    });
-                }
+                currentAudio.addEventListener("play", () => {
+                    statusDebug.innerText = "🎵 雲端連續語音同步播放中，機器人說話中...";
+                    // 🔥 修改點：說話時固定使用說話貼圖，不閃爍
+                    safeApplyTexture(textureTalkingObj);
+                });
 
-                // 監聽播放結束
                 currentAudio.addEventListener("ended", () => {
+                    // 播放結束：恢復一般貼圖
                     safeApplyTexture(textureNormalObj);
-                    statusDebug.innerText = "🟢 語音播放完畢，持續監聽下一則指令...";
-                    currentAudio = null;
-                });
-                
-                // 監聽錯誤
-                currentAudio.addEventListener("error", (e) => {
-                    safeApplyTexture(textureNormalObj);
-                    let errorMsg = "❌ 音訊錯誤: ";
-                    if (currentAudio.error) {
-                        switch(currentAudio.error.code) {
-                            case MediaError.MEDIA_ERR_ABORTED:
-                                errorMsg += "播放中斷";
-                                break;
-                            case MediaError.MEDIA_ERR_NETWORK:
-                                errorMsg += "網路錯誤";
-                                break;
-                            case MediaError.MEDIA_ERR_DECODE:
-                                errorMsg += "解碼失敗 - WAV 格式可能有問題";
-                                break;
-                            case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
-                                errorMsg += "不支援的格式";
-                                break;
-                            default:
-                                errorMsg += "未知錯誤";
-                        }
-                    }
-                    statusDebug.innerText = errorMsg;
-                    console.error("Audio Error:", currentAudio.error);
-                    currentAudio = null;
+                    statusDebug.innerText = "🟢 當前語音播放完畢，持續監聽下一則指令...";
                 });
 
-            } catch (err) { 
-                console.error("建立音訊錯誤:", err);
-                safeApplyTexture(textureNormalObj);
-                statusDebug.innerText = "❌ 建立音訊失敗: " + err.message;
-                currentAudio = null;
-            }
+                currentAudio.addEventListener("error", () => {
+                    safeApplyTexture(textureNormalObj);
+                    statusDebug.innerText = "❌ 音訊解碼失敗。請確認寫入的 Base64 格式是否正確。";
+                });
+
+                currentAudio.play().catch(err => {
+                    safeApplyTexture(textureNormalObj);
+                    statusDebug.innerText = "❌ 播放失敗: " + err.message;
+                });
+
+            } catch (err) { console.error(err); }
         }
     </script>
     """
@@ -360,25 +247,7 @@ if os.path.exists(model_filename):
                         .replace("__B64_TALKING__", b64_talking)\
                         .replace("__FB_CONFIG_JSON__", fb_config_json)
     
-    st.components.v1.html(html_code, height=620)
-    st.success("📡 終極連續語音串流看板已完全就緒！")
-    st.info("💡 **使用說明**：\n\n1️⃣ 先點擊綠色「啟用語音系統」按鈕解鎖瀏覽器音訊\n\n2️⃣ 點擊橘色「測試語音播放」確認喇叭正常\n\n3️⃣ 然後 Firebase 的語音資料就會自動播放")
-    
-    # 添加除錯提示
-    with st.expander("🔧 除錯資訊 (如果沒有聲音請查看這裡)"):
-        st.write("""
-        **請檢查以下項目：**
-        
-        1. **瀏覽器控制台錯誤**：按 F12 開啟開發者工具，查看 Console 標籤是否有紅色錯誤
-        
-        2. **Firebase 資料格式**：確認資料以 `UklGR` 開頭且長度 > 10000
-        
-        3. **測試順序**：務必先點綠色解鎖 → 橘色測試 → 然後 Firebase 更新
-        
-        4. **瀏覽器設定**：確認網站沒有被靜音（分頁上點右鍵 → 取消靜音）
-        
-        5. **WAV 格式**：確保上傳的是標準 PCM WAV 檔案（16bit, 22050Hz 或 44100Hz）
-        """)
-    
+    st.components.v1.html(html_code, height=580)
+    st.success("📡 終極連續語音串流看板已完全就緒！(說話時固定顯示說話貼圖，不閃爍)")
 else:
     st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
