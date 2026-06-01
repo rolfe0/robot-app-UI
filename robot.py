@@ -286,7 +286,7 @@ if os.path.exists(model_filename):
                         .replace("__B64_TALKING__", b64_talking)\
                         .replace("__FB_CONFIG_JSON__", fb_config_json)
     
-    st.components.v1.html(html_code, height=580)
+    st.components.v1.html(html_code, height=680)
     st.success("📡 雙材質 AI 動態對口型看板已完美上線！")
 else:
     st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
