@@ -4,8 +4,8 @@ import os
 import json
 
 st.set_page_config(page_title="🤖 雲端語音接收看板", layout="centered")
-st.title("🤖 雲端語音同步面板 (自動刪除版)")
-st.write("目前狀態：🟢 語音播放後自動刪除 Firebase 資料，支援重複輸入相同語音")
+st.title("🤖 雲端語音同步面板 (修正重複播放版)")
+st.write("目前狀態：🟢 修正刪除後再次輸入相同語音無法播放的問題")
 
 # --- 讀取 Firebase 秘密金鑰 ---
 firebase_secret_str = st.secrets.get("FIREBASE_KEY")
@@ -91,6 +91,10 @@ if os.path.exists(model_filename):
         
         let database = null;
         let voiceRef = null;
+        let isPlaying = false;
+        
+        // 🔥 移除 isFirstLoad 機制，改用記錄上次播放的資料
+        let lastPlayedData = null;
 
         unlockBtn.addEventListener("click", () => {
             isAudioUnlocked = true;
@@ -139,13 +143,12 @@ if os.path.exists(model_filename):
             });
         }
 
-        // 🔥 新增：刪除 Firebase 資料的函數
         async function deleteFirebaseData() {
-            if (!database || !voiceRef) return;
+            if (!voiceRef) return;
             try {
                 await set(voiceRef, null);
-                console.log("🗑️ Firebase 資料已刪除");
-                dataDebug.innerText += " | 已自動刪除";
+                console.log("✅ Firebase 資料已刪除");
+                dataDebug.innerText = "🗑️ 資料已自動刪除 | 可以再次輸入相同語音";
             } catch(e) {
                 console.error("刪除失敗:", e);
             }
@@ -163,12 +166,13 @@ if os.path.exists(model_filename):
                 database = getDatabase(app);
                 voiceRef = ref(database, 'test');
 
-                let isFirstLoad = true;
-
+                // 🔥 關鍵修正：每次都處理，不跳過第一次
                 onValue(voiceRef, (snapshot) => {
                     let rawVal = snapshot.val();
+                    
+                    // 顯示當前資料狀態
                     if (!rawVal) {
-                        dataDebug.innerText = "Firebase 狀態: 目前 'test' 欄位為空值 (null)";
+                        dataDebug.innerText = "📭 Firebase 狀態: test 欄位為空 (null) - 等待輸入";
                         return;
                     }
 
@@ -185,77 +189,93 @@ if os.path.exists(model_filename):
                     
                     incomingAudioData = incomingAudioData.toString().trim().replace(/^['"]|['"]$/g, '');
                     
-                    dataDebug.innerText += " | 開頭: " + incomingAudioData.substring(0, 50) + "...";
-
-                    if (isFirstLoad) {
-                        isFirstLoad = false;
-                        statusDebug.innerText = "🟢 雲端同步完成！請嘗試更改 Firebase 資料庫觸發播音。";
+                    dataDebug.innerText += " | 開頭: " + incomingAudioData.substring(0, 40) + "...";
+                    
+                    // 🔥 重要：檢查是否是有效音訊（長度 > 100）
+                    if (incomingAudioData.length < 100) {
+                        statusDebug.innerText = "⚠️ 資料長度不足 (" + incomingAudioData.length + ")，不是完整音訊";
                         return;
                     }
                     
-                    if (incomingAudioData.length > 100) {
-                        if (!isAudioUnlocked) {
-                            statusDebug.innerText = "⚠️ 偵測到語音，但請先點選上方「綠色按鈕」解鎖喇叭！";
-                            return;
-                        }
-                        
-                        if (!incomingAudioData.startsWith("data:")) {
-                            incomingAudioData = "data:audio/wav;base64," + incomingAudioData;
-                        }
-                        
-                        // 中斷目前播放
-                        if (currentAudio && !currentAudio.paused && !currentAudio.ended) {
-                            currentAudio.pause();
-                            currentAudio = null;
-                        }
-                        
-                        playIncomingAudio(incomingAudioData);
-                    } else {
-                        statusDebug.innerText = "⚠️ 收到非音訊格式（字串過短），已略過。";
+                    if (!isAudioUnlocked) {
+                        statusDebug.innerText = "⚠️ 偵測到語音，但請先點擊綠色按鈕解鎖喇叭！";
+                        return;
                     }
+                    
+                    // 如果正在播放中，先中斷
+                    if (isPlaying && currentAudio) {
+                        statusDebug.innerText = "⏸️ 中斷目前播放，播放新語音...";
+                        currentAudio.pause();
+                        currentAudio = null;
+                        isPlaying = false;
+                    }
+                    
+                    if (!incomingAudioData.startsWith("data:")) {
+                        incomingAudioData = "data:audio/wav;base64," + incomingAudioData;
+                    }
+                    
+                    // 🔥 記錄播放的資料
+                    lastPlayedData = incomingAudioData;
+                    playIncomingAudio(incomingAudioData);
                 });
             } catch(err) { 
                 statusDebug.innerText = "❌ Firebase 連線失敗: " + err.message;
+                console.error(err);
             }
         }
 
         function playIncomingAudio(audioUrlStr) {
             try {
                 currentAudio = new Audio(audioUrlStr);
+                isPlaying = true;
 
                 currentAudio.addEventListener("play", () => {
-                    statusDebug.innerText = "🎵 雲端連續語音同步播放中，機器人說話中...";
+                    statusDebug.innerText = "🎵 語音播放中，機器人說話中...";
                     safeApplyTexture(textureTalkingObj);
                 });
 
-                currentAudio.addEventListener("ended", () => {
+                currentAudio.addEventListener("ended", async () => {
                     safeApplyTexture(textureNormalObj);
-                    statusDebug.innerText = "🟢 當前語音播放完畢，持續監聽下一則指令...";
+                    statusDebug.innerText = "🟢 語音播放完畢，正在刪除 Firebase 資料...";
+                    isPlaying = false;
                     currentAudio = null;
                     
-                    // 🔥 關鍵：播放完成後自動刪除 Firebase 資料
-                    deleteFirebaseData();
+                    // 🔥 播放完成後刪除 Firebase 資料
+                    await deleteFirebaseData();
+                    statusDebug.innerText = "🟢 就緒，可以再次輸入相同語音";
                 });
 
-                currentAudio.addEventListener("error", () => {
+                currentAudio.addEventListener("error", async (e) => {
                     safeApplyTexture(textureNormalObj);
-                    statusDebug.innerText = "❌ 音訊解碼失敗。請確認寫入的 Base64 格式是否正確。";
+                    let errorMsg = "❌ 音訊錯誤";
+                    if (currentAudio.error) {
+                        switch(currentAudio.error.code) {
+                            case 1: errorMsg = "❌ 播放中斷"; break;
+                            case 2: errorMsg = "❌ 網路錯誤"; break;
+                            case 3: errorMsg = "❌ 解碼失敗 - Base64 可能損毀"; break;
+                            case 4: errorMsg = "❌ 不支援的格式"; break;
+                        }
+                    }
+                    statusDebug.innerText = errorMsg;
+                    isPlaying = false;
                     currentAudio = null;
                     
-                    // 錯誤時也刪除資料，避免卡住
-                    deleteFirebaseData();
+                    await deleteFirebaseData();
                 });
 
-                currentAudio.play().catch(err => {
+                currentAudio.play().catch(async (err) => {
                     safeApplyTexture(textureNormalObj);
                     statusDebug.innerText = "❌ 播放失敗: " + err.message;
+                    isPlaying = false;
                     currentAudio = null;
                     
-                    // 播放失敗也刪除資料
-                    deleteFirebaseData();
+                    await deleteFirebaseData();
                 });
 
-            } catch (err) { console.error(err); }
+            } catch (err) { 
+                console.error(err);
+                isPlaying = false;
+            }
         }
     </script>
     """
@@ -265,9 +285,22 @@ if os.path.exists(model_filename):
     html_code = html_code.replace("__B64_TALKING__", b64_talking)
     html_code = html_code.replace("__FB_CONFIG_JSON__", fb_config_json)
     
-    st.components.v1.html(html_code, height=580)
+    st.components.v1.html(html_code, height=600)
     st.success("📡 語音串流看板已完全就緒！")
-    st.info("💡 **自動刪除功能**：語音播放完成後會自動刪除 Firebase 中的資料，下次輸入相同語音時可以正常播放。")
+    
+    st.info("""
+    💡 **修正說明**：
+    
+    - ✅ 移除了 `isFirstLoad` 機制，現在**每次** Firebase 有資料都會播放
+    - ✅ 語音播放完成後自動刪除資料
+    - ✅ 刪除後可以**重複輸入相同的語音**
+    
+    **測試流程**：
+    1. 點擊綠色按鈕解鎖
+    2. 寫入語音到 Firebase → 播放
+    3. 播放完成 → 自動刪除（顯示 null）
+    4. **再次寫入相同的語音** → 再次播放 ✅
+    """)
     
 else:
     st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
