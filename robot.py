@@ -4,7 +4,7 @@ import os
 import json
 
 st.set_page_config(page_title="🤖 雲端語音接收看板", layout="centered")
-st.title("🤖 雲端語音同步面板 (支援重複播放)")
+st.title("🤖 雲端語音同步面板 (支援重複播放版)")
 st.write("目前狀態：🟢 支援相同語音重複播放（透過時間戳）")
 
 # --- 讀取 Firebase 秘密金鑰 ---
@@ -24,7 +24,7 @@ if firebase_secret_str:
     except Exception as e:
         st.error(f"❌ 金鑰解析失敗: {e}")
 else:
-    st.warning("⚠️ 系統未偵測到 Firebase 金鑰")
+    st.warning("⚠️ 系統未偵測到環境變數中的 Firebase 金鑰。")
 
 # 檔案名稱定義
 model_filename = "robot.glb"
@@ -89,7 +89,7 @@ if os.path.exists(model_filename):
         let currentAudio = null;
         let isAudioUnlocked = false;
         
-        let lastPlayedTimestamp = 0;  // 記錄上次的時間戳
+        let lastPlayedTimestamp = 0;
 
         unlockBtn.addEventListener("click", () => {
             isAudioUnlocked = true;
@@ -159,27 +159,22 @@ if os.path.exists(model_filename):
                         return;
                     }
 
-                    // ========== 🔥 關鍵修改：處理兩種資料格式 ==========
                     let incomingAudioData = "";
                     let incomingTimestamp = 0;
                     
-                    // 檢查是否是物件格式（包含 audio 和 timestamp）
                     if (typeof rawVal === 'object' && rawVal !== null) {
                         incomingAudioData = rawVal.audio || "";
                         incomingTimestamp = rawVal.timestamp || 0;
-                        dataDebug.innerText = `📦 收到物件格式 | 時間戳: ${incomingTimestamp} | 音訊長度: ${incomingAudioData.length}`;
+                        dataDebug.innerText = "📦 收到物件 | 時間戳: " + incomingTimestamp + " | 長度: " + incomingAudioData.length;
                     } else {
-                        // 相容舊的純字串格式
                         incomingAudioData = rawVal.toString().trim();
                         incomingTimestamp = Date.now();
-                        dataDebug.innerText = `📝 收到純文字格式 | 音訊長度: ${incomingAudioData.length}`;
+                        dataDebug.innerText = "📝 收到文字 | 長度: " + incomingAudioData.length;
                     }
-                    // ==================================================
                     
                     incomingAudioData = incomingAudioData.toString().trim().replace(/^['"]|['"]$/g, '');
                     
-                    let displayPrefix = incomingAudioData.substring(0, 50);
-                    dataDebug.innerText += " | 開頭: " + displayPrefix + "...";
+                    dataDebug.innerText += " | 開頭: " + incomingAudioData.substring(0, 50) + "...";
 
                     if (isFirstLoad) {
                         isFirstLoad = false;
@@ -198,7 +193,6 @@ if os.path.exists(model_filename):
                             incomingAudioData = "data:audio/wav;base64," + incomingAudioData;
                         }
                         
-                        // 中斷目前播放
                         if (currentAudio && !currentAudio.paused && !currentAudio.ended) {
                             currentAudio.pause();
                             currentAudio = null;
@@ -210,7 +204,9 @@ if os.path.exists(model_filename):
                         statusDebug.innerText = "⚠️ 收到非音訊格式（字串過短），已略過。";
                     }
                 });
-            } catch(err) { statusDebug.innerText = "❌ Firebase 連線失敗: " + err.message; }
+            } catch(err) { 
+                statusDebug.innerText = "❌ Firebase 連線失敗: " + err.message;
+            }
         }
 
         function playIncomingAudio(audioUrlStr) {
@@ -245,19 +241,13 @@ if os.path.exists(model_filename):
     </script>
     """
 
-    html_code = raw_html.replace("__B64_MODEL__", b64_model)\
-                        .replace("__B64_NORMAL__", b64_normal)\
-                        .replace("__B64_TALKING__", b64_talking)\
-                        .replace("__FB_CONFIG_JSON__", fb_config_json)
+    html_code = raw_html.replace("__B64_MODEL__", b64_model)
+    html_code = html_code.replace("__B64_NORMAL__", b64_normal)
+    html_code = html_code.replace("__B64_TALKING__", b64_talking)
+    html_code = html_code.replace("__FB_CONFIG_JSON__", fb_config_json)
     
     st.components.v1.html(html_code, height=580)
-    st.success("📡 語音串流看板已完全就緒！")
+    st.success("📡 終極連續語音串流看板已完全就緒！")
     
-    # 顯示使用說明
-    with st.expander("📖 如何讓相同語音重複播放"):
-        st.markdown("""
-        ### 🔥 現在支援兩種資料格式：
-        
-        **格式 1：純文字（相容舊版）**
-        ```json
-        test: "UklGRjSxAgBXQVZFZm10IB..."
+else:
+    st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
