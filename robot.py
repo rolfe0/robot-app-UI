@@ -4,8 +4,8 @@ import os
 import json
 
 st.set_page_config(page_title="🤖 雲端語音接收看板", layout="centered")
-st.title("🤖 雲端語音同步面板 (支援重複播放版)")
-st.write("目前狀態：🟢 支援相同語音重複播放（透過時間戳）")
+st.title("🤖 雲端語音同步面板 (自動刪除版)")
+st.write("目前狀態：🟢 語音播放後自動刪除 Firebase 資料，支援重複輸入相同語音")
 
 # --- 讀取 Firebase 秘密金鑰 ---
 firebase_secret_str = st.secrets.get("FIREBASE_KEY")
@@ -72,7 +72,7 @@ if os.path.exists(model_filename):
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+        import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
         const modelViewer = document.querySelector("#live-robot");
         const unlockBtn = document.querySelector("#unlock-audio-btn");
@@ -89,7 +89,8 @@ if os.path.exists(model_filename):
         let currentAudio = null;
         let isAudioUnlocked = false;
         
-        let lastPlayedTimestamp = 0;
+        let database = null;
+        let voiceRef = null;
 
         unlockBtn.addEventListener("click", () => {
             isAudioUnlocked = true;
@@ -138,6 +139,18 @@ if os.path.exists(model_filename):
             });
         }
 
+        // 🔥 新增：刪除 Firebase 資料的函數
+        async function deleteFirebaseData() {
+            if (!database || !voiceRef) return;
+            try {
+                await set(voiceRef, null);
+                console.log("🗑️ Firebase 資料已刪除");
+                dataDebug.innerText += " | 已自動刪除";
+            } catch(e) {
+                console.error("刪除失敗:", e);
+            }
+        }
+
         function startFirebaseListener() {
             const firebaseConfig = __FB_CONFIG_JSON__;
             if (!firebaseConfig.databaseURL) {
@@ -147,8 +160,8 @@ if os.path.exists(model_filename):
 
             try {
                 const app = initializeApp(firebaseConfig);
-                const database = getDatabase(app);
-                const voiceRef = ref(database, 'test');
+                database = getDatabase(app);
+                voiceRef = ref(database, 'test');
 
                 let isFirstLoad = true;
 
@@ -160,15 +173,13 @@ if os.path.exists(model_filename):
                     }
 
                     let incomingAudioData = "";
-                    let incomingTimestamp = 0;
                     
+                    // 支援物件格式或純文字格式
                     if (typeof rawVal === 'object' && rawVal !== null) {
                         incomingAudioData = rawVal.audio || "";
-                        incomingTimestamp = rawVal.timestamp || 0;
-                        dataDebug.innerText = "📦 收到物件 | 時間戳: " + incomingTimestamp + " | 長度: " + incomingAudioData.length;
+                        dataDebug.innerText = "📦 收到物件 | 長度: " + incomingAudioData.length;
                     } else {
                         incomingAudioData = rawVal.toString().trim();
-                        incomingTimestamp = Date.now();
                         dataDebug.innerText = "📝 收到文字 | 長度: " + incomingAudioData.length;
                     }
                     
@@ -178,7 +189,6 @@ if os.path.exists(model_filename):
 
                     if (isFirstLoad) {
                         isFirstLoad = false;
-                        lastPlayedTimestamp = incomingTimestamp;
                         statusDebug.innerText = "🟢 雲端同步完成！請嘗試更改 Firebase 資料庫觸發播音。";
                         return;
                     }
@@ -193,12 +203,12 @@ if os.path.exists(model_filename):
                             incomingAudioData = "data:audio/wav;base64," + incomingAudioData;
                         }
                         
+                        // 中斷目前播放
                         if (currentAudio && !currentAudio.paused && !currentAudio.ended) {
                             currentAudio.pause();
                             currentAudio = null;
                         }
                         
-                        lastPlayedTimestamp = incomingTimestamp;
                         playIncomingAudio(incomingAudioData);
                     } else {
                         statusDebug.innerText = "⚠️ 收到非音訊格式（字串過短），已略過。";
@@ -222,18 +232,27 @@ if os.path.exists(model_filename):
                     safeApplyTexture(textureNormalObj);
                     statusDebug.innerText = "🟢 當前語音播放完畢，持續監聽下一則指令...";
                     currentAudio = null;
+                    
+                    // 🔥 關鍵：播放完成後自動刪除 Firebase 資料
+                    deleteFirebaseData();
                 });
 
                 currentAudio.addEventListener("error", () => {
                     safeApplyTexture(textureNormalObj);
                     statusDebug.innerText = "❌ 音訊解碼失敗。請確認寫入的 Base64 格式是否正確。";
                     currentAudio = null;
+                    
+                    // 錯誤時也刪除資料，避免卡住
+                    deleteFirebaseData();
                 });
 
                 currentAudio.play().catch(err => {
                     safeApplyTexture(textureNormalObj);
                     statusDebug.innerText = "❌ 播放失敗: " + err.message;
                     currentAudio = null;
+                    
+                    // 播放失敗也刪除資料
+                    deleteFirebaseData();
                 });
 
             } catch (err) { console.error(err); }
@@ -246,8 +265,9 @@ if os.path.exists(model_filename):
     html_code = html_code.replace("__B64_TALKING__", b64_talking)
     html_code = html_code.replace("__FB_CONFIG_JSON__", fb_config_json)
     
-    st.components.v1.html(html_code, height=680)
-    st.success("📡 終極連續語音串流看板已完全就緒！")
+    st.components.v1.html(html_code, height=580)
+    st.success("📡 語音串流看板已完全就緒！")
+    st.info("💡 **自動刪除功能**：語音播放完成後會自動刪除 Firebase 中的資料，下次輸入相同語音時可以正常播放。")
     
 else:
     st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
