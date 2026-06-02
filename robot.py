@@ -3,10 +3,9 @@ import base64
 import os
 import json
 
-# 1. 設定網頁標題與外觀
 st.set_page_config(page_title="🤖 雲端語音接收看板", layout="centered")
-st.title("🤖 雲端語音同步面板 (允許重複播放版)")
-st.write("目前狀態：🟢 修改為允許重複輸入相同語音，每次 Firebase 更新都會播放。")
+st.title("🤖 雲端語音同步面板 (支援重複播放)")
+st.write("目前狀態：🟢 支援相同語音重複播放（透過時間戳）")
 
 # --- 讀取 Firebase 秘密金鑰 ---
 firebase_secret_str = st.secrets.get("FIREBASE_KEY")
@@ -23,16 +22,15 @@ if firebase_secret_str:
             "projectId": config_data.get("project_id"),
         })
     except Exception as e:
-        st.error(f"❌ 金鑰解析失敗，請檢查 Settings 裡的 Secrets。")
+        st.error(f"❌ 金鑰解析失敗: {e}")
 else:
-    st.warning("⚠️ 系統未偵測到環境變數中的 Firebase 金鑰。")
+    st.warning("⚠️ 系統未偵測到 Firebase 金鑰")
 
 # 檔案名稱定義
 model_filename = "robot.glb"
 texture_normal = "idle.png"
 texture_talking = "talk.png"
 
-# 2. 檢查並準備貼圖
 b64_normal = ""
 b64_talking = ""
 
@@ -43,7 +41,6 @@ if os.path.exists(texture_talking):
     with open(texture_talking, "rb") as f:
         b64_talking = base64.b64encode(f.read()).decode()
 
-# 3. 檢查 3D 檔案是否存在並讀取
 if os.path.exists(model_filename):
     with open(model_filename, "rb") as f:
         bytes_data = f.read()
@@ -92,10 +89,8 @@ if os.path.exists(model_filename):
         let currentAudio = null;
         let isAudioUnlocked = false;
         
-        // 用來記錄最後一次播放的音訊字串（僅用於除錯，不再用於阻擋）
-        let lastPlayedAudioStr = ""; 
+        let lastPlayedTimestamp = 0;  // 記錄上次的時間戳
 
-        // 使用者點擊解鎖喇叭通道
         unlockBtn.addEventListener("click", () => {
             isAudioUnlocked = true;
             unlockBtn.style.backgroundColor = "#555555";
@@ -164,15 +159,31 @@ if os.path.exists(model_filename):
                         return;
                     }
 
-                    // 強制轉字串並清洗
-                    let incomingAudioData = rawVal.toString().trim().replace(/^['"]|['"]$/g, '');
+                    // ========== 🔥 關鍵修改：處理兩種資料格式 ==========
+                    let incomingAudioData = "";
+                    let incomingTimestamp = 0;
                     
-                    dataDebug.innerText = "最新收到資料開頭: " + incomingAudioData.substring(0, 50) + "... (長度: " + incomingAudioData.length + ")";
+                    // 檢查是否是物件格式（包含 audio 和 timestamp）
+                    if (typeof rawVal === 'object' && rawVal !== null) {
+                        incomingAudioData = rawVal.audio || "";
+                        incomingTimestamp = rawVal.timestamp || 0;
+                        dataDebug.innerText = `📦 收到物件格式 | 時間戳: ${incomingTimestamp} | 音訊長度: ${incomingAudioData.length}`;
+                    } else {
+                        // 相容舊的純字串格式
+                        incomingAudioData = rawVal.toString().trim();
+                        incomingTimestamp = Date.now();
+                        dataDebug.innerText = `📝 收到純文字格式 | 音訊長度: ${incomingAudioData.length}`;
+                    }
+                    // ==================================================
+                    
+                    incomingAudioData = incomingAudioData.toString().trim().replace(/^['"]|['"]$/g, '');
+                    
+                    let displayPrefix = incomingAudioData.substring(0, 50);
+                    dataDebug.innerText += " | 開頭: " + displayPrefix + "...";
 
-                    // 第一次載入如果是網頁開啟前的舊資料，更新狀態後略過不播
                     if (isFirstLoad) {
                         isFirstLoad = false;
-                        lastPlayedAudioStr = incomingAudioData;
+                        lastPlayedTimestamp = incomingTimestamp;
                         statusDebug.innerText = "🟢 雲端同步完成！請嘗試更改 Firebase 資料庫觸發播音。";
                         return;
                     }
@@ -183,20 +194,17 @@ if os.path.exists(model_filename):
                             return;
                         }
                         
-                        // 防呆補齊 Data URL 開頭
                         if (!incomingAudioData.startsWith("data:")) {
                             incomingAudioData = "data:audio/wav;base64," + incomingAudioData;
                         }
                         
-                        // 🔥 修改點：移除重複檢查，每次 Firebase 更新都播放
-                        // 如果正在播放中，先停止舊的再播新的
+                        // 中斷目前播放
                         if (currentAudio && !currentAudio.paused && !currentAudio.ended) {
-                            statusDebug.innerText = "🎵 中斷目前播放，播放新語音...";
                             currentAudio.pause();
                             currentAudio = null;
                         }
                         
-                        lastPlayedAudioStr = incomingAudioData;
+                        lastPlayedTimestamp = incomingTimestamp;
                         playIncomingAudio(incomingAudioData);
                     } else {
                         statusDebug.innerText = "⚠️ 收到非音訊格式（字串過短），已略過。";
@@ -243,8 +251,13 @@ if os.path.exists(model_filename):
                         .replace("__FB_CONFIG_JSON__", fb_config_json)
     
     st.components.v1.html(html_code, height=580)
-    st.success("📡 語音串流看板已就緒！(允許重複播放相同語音)")
+    st.success("📡 語音串流看板已完全就緒！")
     
-    st.info("💡 **修改說明**：已移除防止重複播放的檢查，現在每次 Firebase 更新都會播放語音。如果正在播放中，會先中斷再播放新的。")
-else:
-    st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
+    # 顯示使用說明
+    with st.expander("📖 如何讓相同語音重複播放"):
+        st.markdown("""
+        ### 🔥 現在支援兩種資料格式：
+        
+        **格式 1：純文字（相容舊版）**
+        ```json
+        test: "UklGRjSxAgBXQVZFZm10IB..."
