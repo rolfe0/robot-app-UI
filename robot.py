@@ -246,7 +246,7 @@ if os.path.exists(model_filename):
     html_code = html_code.replace("__B64_TALKING__", b64_talking)
     html_code = html_code.replace("__FB_CONFIG_JSON__", fb_config_json)
     
-    st.components.v1.html(html_code, height=580)
+    st.components.v1.html(html_code, height=680)
     st.success("📡 終極連續語音串流看板已完全就緒！")
     
 else:
