@@ -5,8 +5,8 @@ import json
 
 # 1. 設定網頁標題與外觀
 st.set_page_config(page_title="🤖 雲端語音接收看板", layout="centered")
-st.title("🤖 雲端語音同步面板 (說話不閃爍穩定版)")
-st.write("目前狀態：🟢 基於穩定版本修改，說話時固定顯示說話貼圖，不閃爍。")
+st.title("🤖 雲端語音同步面板 (允許重複播放版)")
+st.write("目前狀態：🟢 修改為允許重複輸入相同語音，每次 Firebase 更新都會播放。")
 
 # --- 讀取 Firebase 秘密金鑰 ---
 firebase_secret_str = st.secrets.get("FIREBASE_KEY")
@@ -49,7 +49,6 @@ if os.path.exists(model_filename):
         bytes_data = f.read()
     b64_model = base64.b64encode(bytes_data).decode()
 
-    # 4. 採用純字串定義 HTML (基於工作版本，只修改貼圖行為)
     raw_html = """
     <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
     
@@ -93,7 +92,7 @@ if os.path.exists(model_filename):
         let currentAudio = null;
         let isAudioUnlocked = false;
         
-        // 用來記錄最後一次「真正播放」的音訊字串
+        // 用來記錄最後一次播放的音訊字串（僅用於除錯，不再用於阻擋）
         let lastPlayedAudioStr = ""; 
 
         // 使用者點擊解鎖喇叭通道
@@ -189,10 +188,12 @@ if os.path.exists(model_filename):
                             incomingAudioData = "data:audio/wav;base64," + incomingAudioData;
                         }
                         
-                        // 關鍵智慧判定邏輯
-                        if (currentAudio && !currentAudio.paused && !currentAudio.ended && incomingAudioData === lastPlayedAudioStr) {
-                            statusDebug.innerText = "🎵 收到重複語音訊號，保持目前音訊完整播放中...";
-                            return;
+                        // 🔥 修改點：移除重複檢查，每次 Firebase 更新都播放
+                        // 如果正在播放中，先停止舊的再播新的
+                        if (currentAudio && !currentAudio.paused && !currentAudio.ended) {
+                            statusDebug.innerText = "🎵 中斷目前播放，播放新語音...";
+                            currentAudio.pause();
+                            currentAudio = null;
                         }
                         
                         lastPlayedAudioStr = incomingAudioData;
@@ -206,34 +207,29 @@ if os.path.exists(model_filename):
 
         function playIncomingAudio(audioUrlStr) {
             try {
-                // 中斷前一條
-                if (currentAudio) {
-                    currentAudio.pause();
-                    currentAudio = null;
-                }
-
                 currentAudio = new Audio(audioUrlStr);
 
                 currentAudio.addEventListener("play", () => {
                     statusDebug.innerText = "🎵 雲端連續語音同步播放中，機器人說話中...";
-                    // 🔥 修改點：說話時固定使用說話貼圖，不閃爍
                     safeApplyTexture(textureTalkingObj);
                 });
 
                 currentAudio.addEventListener("ended", () => {
-                    // 播放結束：恢復一般貼圖
                     safeApplyTexture(textureNormalObj);
                     statusDebug.innerText = "🟢 當前語音播放完畢，持續監聽下一則指令...";
+                    currentAudio = null;
                 });
 
                 currentAudio.addEventListener("error", () => {
                     safeApplyTexture(textureNormalObj);
                     statusDebug.innerText = "❌ 音訊解碼失敗。請確認寫入的 Base64 格式是否正確。";
+                    currentAudio = null;
                 });
 
                 currentAudio.play().catch(err => {
                     safeApplyTexture(textureNormalObj);
                     statusDebug.innerText = "❌ 播放失敗: " + err.message;
+                    currentAudio = null;
                 });
 
             } catch (err) { console.error(err); }
@@ -241,13 +237,14 @@ if os.path.exists(model_filename):
     </script>
     """
 
-    # 5. 安全替換標籤
     html_code = raw_html.replace("__B64_MODEL__", b64_model)\
                         .replace("__B64_NORMAL__", b64_normal)\
                         .replace("__B64_TALKING__", b64_talking)\
                         .replace("__FB_CONFIG_JSON__", fb_config_json)
     
     st.components.v1.html(html_code, height=580)
-    st.success("📡 終極連續語音串流看板已完全就緒！(說話時固定顯示說話貼圖，不閃爍)")
+    st.success("📡 語音串流看板已就緒！(允許重複播放相同語音)")
+    
+    st.info("💡 **修改說明**：已移除防止重複播放的檢查，現在每次 Firebase 更新都會播放語音。如果正在播放中，會先中斷再播放新的。")
 else:
     st.error(f"❌ 系統在專案中找不到【{model_filename}】檔案！")
